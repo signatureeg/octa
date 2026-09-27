@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import type { AppUpdate, UpdateProgress } from '../../types'
 import { compareVersions } from './update'
 import { idleProgress, shortError } from './auto-update'
@@ -80,6 +80,8 @@ export function applyScript(options: { pid: number; exePath: string; resourcesPa
   const q = (value: string): string => `"${value.replace(/"/g, '')}"`
   return [
     '@echo off',
+    `set "LOG=${options.pendingFile.replace(/pending\.json$/, 'apply-update.log').replace(/"/g, '')}"`,
+    `echo %DATE% %TIME% waiting for pid ${options.pid} >> "%LOG%"`,
     `set "RES=${options.resourcesPath.replace(/"/g, '')}"`,
     ':wait',
     `tasklist /FI "PID eq ${options.pid}" 2>NUL | find "${options.pid}" >NUL`,
@@ -87,6 +89,7 @@ export function applyScript(options: { pid: number; exePath: string; resourcesPa
     'if exist "%RES%\\app.asar.bak" del /f /q "%RES%\\app.asar.bak" >NUL 2>&1',
     'copy /y "%RES%\\app.asar" "%RES%\\app.asar.bak" >NUL',
     `move /y ${q(options.downloadedAsar)} "%RES%\\app.asar" >NUL`,
+    'echo %DATE% %TIME% move exit %ERRORLEVEL% >> "%LOG%"',
     'if errorlevel 1 (',
     '  copy /y "%RES%\\app.asar.bak" "%RES%\\app.asar" >NUL',
     `  del /f /q ${q(options.pendingFile)} >NUL 2>&1`,
@@ -202,10 +205,7 @@ export class AppUpdateController {
       downloadedAsar: this.downloadedPath,
       pendingFile
     }))
-    const launch = this.options.spawnScript ?? ((path: string) => {
-      const child = spawn('cmd.exe', ['/c', path], { detached: true, stdio: 'ignore', windowsHide: true })
-      child.unref()
-    })
+    const launch = this.options.spawnScript ?? launchOutsideJob
     launch(scriptPath)
     this.options.quit?.()
     return true
@@ -234,6 +234,22 @@ export function settlePendingAppUpdate(updatesDir: string, currentVersion: strin
     return `app update to ${pending.version} applied`
   }
   return `app update to ${pending.version ?? '?'} did not apply; still running ${currentVersion}`
+}
+
+/**
+ * Electron's main process lives in a Windows job object, so a plain detached child dies with it.
+ * WMI's Win32_Process.Create starts the script from the WMI host, outside our job; a detached spawn
+ * is the fallback when PowerShell is unavailable.
+ */
+function launchOutsideJob(scriptPath: string): void {
+  const commandLine = `cmd.exe /c "${scriptPath}"`.replace(/'/g, "''")
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${commandLine}' }; exit [int]$r.ReturnValue`
+  ], { windowsHide: true, timeout: 15_000 })
+  if (result.status === 0) return
+  const child = spawn('cmd.exe', ['/c', scriptPath], { detached: true, stdio: 'ignore', windowsHide: true })
+  child.unref()
 }
 
 const defaultFetcher: AppUpdateFetcher = async (url, init) => {

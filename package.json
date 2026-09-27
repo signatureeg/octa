@@ -1,6 +1,6 @@
 {
   "name": "octa",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Octa Assistant desktop control center.",
   "main": "./out/main/main.js",
   "author": "Octa contributors",
