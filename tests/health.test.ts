@@ -102,8 +102,8 @@ describe('Octa environment health checks', () => {
     expect(report.ok).toBe(true)
     expect(report.checks.map((check) => check.id)).toEqual([...HEALTH_CHECK_IDS])
     expect(report.checks.every((check) => check.ok && check.detail)).toBe(true)
-    expect(command).toHaveBeenCalledWith('claude', ['-p', '--no-session-persistence', '--output-format', 'text'], expect.objectContaining({ timeoutMs: 5_000 }))
-    expect(command).toHaveBeenCalledWith('codex', ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only'], expect.objectContaining({ timeoutMs: 5_000 }))
+    expect(command).toHaveBeenCalledWith('claude', ['-p', '--no-session-persistence', '--output-format', 'text'], expect.objectContaining({ timeoutMs: 20_000 }))
+    expect(command).toHaveBeenCalledWith('codex', ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only'], expect.objectContaining({ timeoutMs: 20_000 }))
   })
 
   it('keeps optional Photoshop and Brave checks green when they are not configured', async () => {
@@ -129,7 +129,7 @@ describe('Octa environment health checks', () => {
     })
     const check = await checkClaude({ command, resolveExecutable: (name) => name })
     expect(check.ok).toBe(false)
-    expect(check.detail).toContain('timed out')
+    expect(check.detail).toContain('ping timed out after 20 seconds')
     expect(check.fix).toContain('Claude Code')
   })
 

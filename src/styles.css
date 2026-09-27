@@ -1581,6 +1581,7 @@ html, body, #root { background: transparent !important; }
 }
 .task-column {
   min-width: 0;
+  container-type: inline-size;
 }
 .task-column > header {
   display: flex;
@@ -1646,6 +1647,17 @@ html, body, #root { background: transparent !important; }
   background: var(--secondary);
   box-shadow: var(--shadow-sm);
   transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+/* In a narrow board column the check + two action buttons leave the title only a few pixels,
+   which wraps Arabic one letter per line. Drop the actions under the title instead. */
+@container (max-width: 320px) {
+  .task-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .task-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
 }
 .task-card:hover {
   border-color: color-mix(in srgb, var(--primary) 54%, var(--border));

@@ -19,6 +19,8 @@ import { resolveCliBinary } from '../jobs/runner'
 
 export const DEFAULT_HEALTH_OCTA_HOME = 'C:\\Octa'
 export const HEALTH_COMMAND_TIMEOUT_MS = 5_000
+// The authenticated ping is a real model round-trip, which routinely takes longer than a --version call.
+export const HEALTH_PING_TIMEOUT_MS = 20_000
 
 export const HEALTH_CHECK_IDS = [
   'node',
@@ -206,8 +208,8 @@ function commandFailed(result: HealthCommandResult): boolean {
   return result.timedOut || result.code !== 0
 }
 
-function commandFailureDetail(label: string, result: HealthCommandResult): string {
-  if (result.timedOut) return `${label} timed out after ${HEALTH_COMMAND_TIMEOUT_MS / 1_000} seconds.`
+function commandFailureDetail(label: string, result: HealthCommandResult, timeoutMs = HEALTH_COMMAND_TIMEOUT_MS): string {
+  if (result.timedOut) return `${label} timed out after ${timeoutMs / 1_000} seconds.`
   const output = outputLine(result)
   return output ? `${label} failed: ${output}` : `${label} failed with exit code ${result.code ?? 'unknown'}.`
 }
@@ -398,9 +400,9 @@ async function checkCli(
     if (commandFailed(version)) return failure(commandFailureDetail(`${label} version`, version), fix)
     const ping = await execute(options, executable, pingArgs, {
       input: 'Reply with exactly: ok\n',
-      timeoutMs: HEALTH_COMMAND_TIMEOUT_MS
+      timeoutMs: HEALTH_PING_TIMEOUT_MS
     })
-    if (commandFailed(ping)) return failure(commandFailureDetail(`${label} ping`, ping), fix)
+    if (commandFailed(ping)) return failure(commandFailureDetail(`${label} ping`, ping, HEALTH_PING_TIMEOUT_MS), fix)
     return success(`${label} ${outputLine(version) || 'installed'}; authenticated ping passed.`)
   } catch (error) {
     return failure(`${label} check failed: ${errorMessage(error)}`, fix)
