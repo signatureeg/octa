@@ -12,6 +12,7 @@ import {
 } from 'node:fs'
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import ffmpegStatic from 'ffmpeg-static'
+import { detectObsidianVault, envPath, resolvePhotoshopPath, unpackedAsarPath } from './paths'
 import type { AppSettings } from '../../types'
 import type { ResearchBrowserStatus } from './browser'
 import { GeminiClient } from '../../cloud/gemini'
@@ -100,6 +101,8 @@ export interface HealthOptions {
   browserStatus?: () => ResearchBrowserStatus | Promise<ResearchBrowserStatus>
   geminiTest?: (apiKey: string, signal: AbortSignal) => Promise<string>
   resolveExecutable?: (name: string) => string
+  /** false disables reading Obsidian's registry (tests). */
+  detectVault?: boolean
   now?: () => Date
 }
 
@@ -139,7 +142,7 @@ const DEFAULT_FIXES: Record<HealthCheckId, string> = {
   vault: 'Choose a readable Obsidian vault folder in Setup. / اختر مجلد Obsidian قابلًا للقراءة في الإعداد.',
   'octa-home': 'Choose a writable folder outside AppData in Setup. / اختر مجلدًا قابلًا للكتابة خارج AppData في الإعداد.',
   'research-browser': 'Open Setup and sign in to the research sites you need. / افتح الإعداد وسجّل الدخول إلى مواقع البحث التي تحتاجها.',
-  'wake-word': 'Place the three openWakeWord files under the configured models folder. / ضع ملفات openWakeWord الثلاثة داخل مجلد النماذج المحدد.'
+  'wake-word': 'Restart Octa to restore the bundled wake-word models, or turn the wake word off in Settings and use push-to-talk. / أعد تشغيل أوكتا عشان يرجّع نماذج كلمة التنبيه، أو اقفل كلمة التنبيه من الإعدادات واستخدم زرار الكلام.'
 }
 
 function defaultFileSystem(): HealthFileSystem {
@@ -247,7 +250,7 @@ function commandEnvironment(options: HealthOptions, additions: NodeJS.ProcessEnv
 }
 
 function nativeExecutableOnPath(name: string, environment: NodeJS.ProcessEnv): string | undefined {
-  const entries = (environment.PATH ?? '').split(delimiter).filter(Boolean)
+  const entries = envPath(environment).split(delimiter).filter(Boolean)
   for (const entry of entries) {
     const candidates = process.platform === 'win32'
       ? [join(entry, `${name}.exe`), join(entry, name)]
@@ -485,7 +488,8 @@ export async function checkPlaywright(
 
 export async function checkFfmpeg(options: HealthOptions = {}): Promise<HealthCheckResult> {
   const fs = options.fileSystem ?? defaultFileSystem()
-  const binary = options.ffmpegPath === undefined ? ffmpegStatic : options.ffmpegPath
+  // ffmpeg-static reports a path inside app.asar; the executable really lives in app.asar.unpacked.
+  const binary = options.ffmpegPath === undefined ? (ffmpegStatic ? unpackedAsarPath(ffmpegStatic) : ffmpegStatic) : options.ffmpegPath
   if (!binary || !fs.isFile(binary)) return failure('The bundled ffmpeg-static binary was not found.', DEFAULT_FIXES.ffmpeg)
   try {
     const result = await execute(options, binary, ['-version'], { timeoutMs: HEALTH_COMMAND_TIMEOUT_MS })
@@ -497,7 +501,7 @@ export async function checkFfmpeg(options: HealthOptions = {}): Promise<HealthCh
 }
 
 export async function checkPhotoshop(settings: AppSettings, options: HealthOptions = {}): Promise<HealthCheckResult> {
-  const path = settings.photoshopPath.trim()
+  const path = settings.photoshopPath.trim() ? resolvePhotoshopPath(settings.photoshopPath) : ''
   if (!path) return optional('Optional: Photoshop is not configured; the PSD fallback remains available.', DEFAULT_FIXES.photoshop)
   const fs = options.fileSystem ?? defaultFileSystem()
   if (!fs.isFile(path)) return failure(`Photoshop was not found at ${path}.`, DEFAULT_FIXES.photoshop)
@@ -530,7 +534,10 @@ export async function checkGemini(settings: AppSettings, options: HealthOptions 
 
 export async function checkVault(settings: AppSettings, options: HealthOptions = {}): Promise<HealthCheckResult> {
   const path = settings.vaultPath.trim()
-  if (!path) return failure('Vault path is not configured.', DEFAULT_FIXES.vault)
+  if (!path) {
+    const detected = options.detectVault === false ? null : detectObsidianVault()
+    return failure(detected ? `Vault path is not configured. Obsidian's last vault is ${detected}.` : 'Vault path is not configured.', DEFAULT_FIXES.vault)
+  }
   const fs = options.fileSystem ?? defaultFileSystem()
   if (!fs.isDirectory(path) || !fs.isReadable(path)) return failure(`Vault is not a readable folder: ${path}.`, DEFAULT_FIXES.vault)
   return success(`Vault is readable at ${path}.`)

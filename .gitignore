@@ -36,3 +36,4 @@ Thumbs.db
 *.swp
 .octa/vitest-demo.config.mjs
 RELEASE-NOTES.md
+.octa/wakeword/

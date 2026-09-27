@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { envPath } from '../octa/paths'
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import {
   appendFileSync,
@@ -604,7 +605,12 @@ function dirnameOf(path: string): string {
 export function resolveCliBinary(name: 'claude' | 'codex', environment: NodeJS.ProcessEnv = process.env): string | undefined {
   const override = environment[name === 'claude' ? 'OCTA_CLAUDE_BINARY' : 'OCTA_CODEX_BINARY']
   if (override?.trim()) return override.trim()
-  const pathEntries = (environment.PATH ?? '').split(delimiter).filter(Boolean)
+  const pathEntries = [
+    ...envPath(environment).split(delimiter),
+    // Where the official installers put the CLIs, in case PATH was not inherited (Start-menu launch).
+    environment.USERPROFILE ? join(environment.USERPROFILE, '.local', 'bin') : '',
+    environment.APPDATA ? join(environment.APPDATA, 'npm') : ''
+  ].filter(Boolean)
   for (const entry of pathEntries) {
     const candidates = [join(entry, `${name}.exe`), join(entry, name), join(entry, `${name}.cmd`)]
     for (const candidate of candidates) {

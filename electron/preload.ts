@@ -284,6 +284,13 @@ const api = {
       return () => ipcRenderer.removeListener('voice:message', wrapped)
     }
   },
+  dialog: {
+    pickPath: (request: { kind: 'file' | 'folder'; extensions?: string[]; defaultPath?: string }): Promise<string | null> =>
+      ipcRenderer.invoke('dialog:pickPath', request)
+  },
+  setup: {
+    detectVault: (): Promise<string | null> => ipcRenderer.invoke('setup:detectVault')
+  },
   files: {
     read: (path: string): Promise<string> => ipcRenderer.invoke('files:read', path),
     open: (path: string): Promise<string> => ipcRenderer.invoke('files:open', path)

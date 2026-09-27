@@ -272,6 +272,7 @@ export function SettingsPage({
                 </SettingField>
                 <SettingField icon={<KeyRound size={18} />} label={label('vertexKeyPath')} detail={label('vertexKeyPathDetail')}>
                   <input dir="ltr" aria-label={label('vertexKeyPath')} onChange={(event) => setValue('vertexKeyPath', event.target.value)} placeholder={label('vertexKeyPathPlaceholder')} spellCheck={false} value={draft.vertexKeyPath} />
+                  <button className="quiet-button setting-browse" onClick={async () => { const picked = await window.octa.dialog.pickPath({ ...{ kind: 'file', extensions: ['json'] }, defaultPath: draft.vertexKeyPath || undefined }); if (picked) setValue('vertexKeyPath', picked) }} type="button"><FolderOpen size={14} aria-hidden="true" />{label('browse')}</button>
                 </SettingField>
                 <SettingField icon={<Globe2 size={18} />} label={label('vertexLocation')} detail={label('vertexLocationDetail')}>
                   <input dir="ltr" aria-label={label('vertexLocation')} onChange={(event) => setValue('vertexLocation', event.target.value)} placeholder={label('vertexLocationPlaceholder')} spellCheck={false} value={draft.vertexLocation} />
@@ -299,6 +300,7 @@ export function SettingsPage({
             </SettingField>
             <SettingField icon={<FolderOpen size={18} />} label={label('wakeWordModelPath')} detail={label('wakeWordModelPathDetail')}>
               <input dir="ltr" aria-label={label('wakeWordModelPath')} onChange={(event) => setValue('wakeWordModelPath', event.target.value)} spellCheck={false} value={draft.wakeWordModelPath} />
+              <button className="quiet-button setting-browse" onClick={async () => { const picked = await window.octa.dialog.pickPath({ ...{ kind: 'file', extensions: ['onnx'] }, defaultPath: draft.wakeWordModelPath || undefined }); if (picked) setValue('wakeWordModelPath', picked) }} type="button"><FolderOpen size={14} aria-hidden="true" />{label('browse')}</button>
             </SettingField>
             <SettingField icon={<Mic size={18} />} label={label('wakeWordSensitivity')} detail={label('wakeWordSensitivityDetail')}>
               <input aria-label={label('wakeWordSensitivity')} max="1" min="0" onChange={(event) => setValue('wakeWordSensitivity', Number(event.target.value))} step="0.01" type="range" value={draft.wakeWordSensitivity} />
@@ -364,15 +366,19 @@ export function SettingsPage({
           <div className="settings-fields">
             <SettingField icon={<FolderOpen size={18} />} label={label('octaHomePath')} detail={label('octaHomePathDetail')}>
               <input dir="ltr" aria-label={label('octaHomePath')} onChange={(event) => setValue('octaHomePath', event.target.value)} placeholder={label('octaHomePathPlaceholder')} spellCheck={false} value={draft.octaHomePath} />
+              <button className="quiet-button setting-browse" onClick={async () => { const picked = await window.octa.dialog.pickPath({ ...{ kind: 'folder' }, defaultPath: draft.octaHomePath || undefined }); if (picked) setValue('octaHomePath', picked) }} type="button"><FolderOpen size={14} aria-hidden="true" />{label('browse')}</button>
             </SettingField>
             <SettingField icon={<FolderOpen size={18} />} label={label('skillsLibraryPath')} detail={label('skillsLibraryPathDetail')}>
               <input dir="ltr" aria-label={label('skillsLibraryPath')} onChange={(event) => setValue('skillsLibraryPath', event.target.value)} placeholder={label('skillsLibraryPathPlaceholder')} spellCheck={false} value={draft.skillsLibraryPath} />
+              <button className="quiet-button setting-browse" onClick={async () => { const picked = await window.octa.dialog.pickPath({ ...{ kind: 'folder' }, defaultPath: draft.skillsLibraryPath || undefined }); if (picked) setValue('skillsLibraryPath', picked) }} type="button"><FolderOpen size={14} aria-hidden="true" />{label('browse')}</button>
             </SettingField>
             <SettingField icon={<FolderOpen size={18} />} label={label('vaultPath')} detail={label('vaultPathDetail')}>
               <input dir="ltr" aria-label={label('vaultPath')} onChange={(event) => setValue('vaultPath', event.target.value)} placeholder={label('vaultPathPlaceholder')} spellCheck={false} value={draft.vaultPath} />
+              <button className="quiet-button setting-browse" onClick={async () => { const picked = await window.octa.dialog.pickPath({ ...{ kind: 'folder' }, defaultPath: draft.vaultPath || undefined }); if (picked) setValue('vaultPath', picked) }} type="button"><FolderOpen size={14} aria-hidden="true" />{label('browse')}</button>
             </SettingField>
             <SettingField icon={<Wrench size={18} />} label={label('photoshopPath')} detail={label('photoshopPathDetail')}>
               <input dir="ltr" aria-label={label('photoshopPath')} onChange={(event) => setValue('photoshopPath', event.target.value)} placeholder={label('photoshopPathPlaceholder')} spellCheck={false} value={draft.photoshopPath} />
+              <button className="quiet-button setting-browse" onClick={async () => { const picked = await window.octa.dialog.pickPath({ ...{ kind: 'file', extensions: ['exe'] }, defaultPath: draft.photoshopPath || undefined }); if (picked) setValue('photoshopPath', picked) }} type="button"><FolderOpen size={14} aria-hidden="true" />{label('browse')}</button>
             </SettingField>
           </div>
         </section>

@@ -2631,3 +2631,11 @@ button.update-banner-link { cursor: pointer; font-family: inherit; }
 .heading-actions > select { height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--foreground); background: var(--octa-input); }
 .builds-layout-empty { grid-template-columns: 1fr; min-height: 0; }
 .health-row-copy small { unicode-bidi: plaintext; }
+/* Path fields: input + native picker button. Paths and keys are always typed left-to-right. */
+.first-run-input-row, .first-run-input-single { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 6px; min-width: 0; }
+.first-run-input-row input, .first-run-input-single input { flex: 1 1 auto; min-width: 0; }
+.first-run-field .first-run-input-row input, .first-run-field .first-run-input-single input { grid-column: auto; grid-row: auto; }
+.first-run-browse, .setting-browse { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; white-space: nowrap; }
+.setting-control:has(.setting-browse) { display: flex; gap: 6px; align-items: center; }
+.setting-control:has(.setting-browse) input { flex: 1 1 auto; min-width: 0; }
+input[dir="ltr"] { text-align: left; }

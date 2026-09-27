@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useState } from 'react'
 import {
+  FolderOpen,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -107,6 +108,8 @@ function Field({
   type = 'text',
   placeholder,
   required,
+  browse,
+  browseLabel,
   onChange
 }: {
   label: string
@@ -115,20 +118,40 @@ function Field({
   type?: 'text' | 'password' | 'url'
   placeholder?: string
   required?: boolean
+  /** Adds a Browse button that opens the native picker. */
+  browse?: { kind: 'file' | 'folder'; extensions?: string[] }
+  browseLabel?: string
   onChange: (value: string) => void
 }): React.JSX.Element {
   return (
     <label className="first-run-field">
       <span className="first-run-field-label">{label}{required && <b aria-hidden="true"> *</b>}</span>
       <span className="first-run-field-detail">{detail}</span>
-      <input
-        autoComplete="off"
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        spellCheck={false}
-        type={type}
-        value={value}
-      />
+      <span className={browse ? 'first-run-input-row' : 'first-run-input-single'}>
+        <input
+          autoComplete="off"
+          dir="ltr"
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          spellCheck={false}
+          type={type}
+          value={value}
+        />
+        {browse && (
+          <button
+            className="quiet-button first-run-browse"
+            onClick={async (event) => {
+              event.preventDefault()
+              const picked = await window.octa.dialog.pickPath({ ...browse, defaultPath: value || undefined })
+              if (picked) onChange(picked)
+            }}
+            type="button"
+          >
+            <FolderOpen size={14} aria-hidden="true" />
+            {browseLabel}
+          </button>
+        )}
+      </span>
     </label>
   )
 }
@@ -288,9 +311,9 @@ export function FirstRun({
   const renderPaths = (): React.JSX.Element => (
     <div className="first-run-form">
       <div className="first-run-form-intro"><FolderCog size={18} aria-hidden="true" /><p>{label('firstRunPathsDetail')}</p></div>
-      <Field label={label('octaHomePath')} detail={label('octaHomePathDetail')} placeholder={label('octaHomePathPlaceholder')} required value={draft.octaHomePath} onChange={(value) => updateDraft('octaHomePath', value)} />
-      <Field label={label('vaultPath')} detail={label('vaultPathDetail')} placeholder={label('vaultPathPlaceholder')} required value={draft.vaultPath} onChange={(value) => updateDraft('vaultPath', value)} />
-      <Field label={label('wakeWordModelPath')} detail={label('wakeWordModelPathDetail')} value={draft.wakeWordModelPath} onChange={(value) => updateDraft('wakeWordModelPath', value)} />
+      <Field label={label('octaHomePath')} detail={label('octaHomePathDetail')} placeholder={label('octaHomePathPlaceholder')} required browse={{ kind: 'folder' }} browseLabel={label('browse')} value={draft.octaHomePath} onChange={(value) => updateDraft('octaHomePath', value)} />
+      <Field label={label('vaultPath')} detail={label('vaultPathDetail')} placeholder={label('vaultPathPlaceholder')} required browse={{ kind: 'folder' }} browseLabel={label('browse')} value={draft.vaultPath} onChange={(value) => updateDraft('vaultPath', value)} />
+      <Field label={label('wakeWordModelPath')} detail={label('wakeWordModelPathDetail')} browse={{ kind: 'file', extensions: ['onnx'] }} browseLabel={label('browse')} value={draft.wakeWordModelPath} onChange={(value) => updateDraft('wakeWordModelPath', value)} />
     </div>
   )
 
@@ -317,7 +340,7 @@ export function FirstRun({
   const renderPhotoshop = (): React.JSX.Element => (
     <div className="first-run-form">
       <div className="first-run-form-intro"><FolderCog size={18} aria-hidden="true" /><p>{label('firstRunPhotoshopDetail')}</p></div>
-      <Field label={label('photoshopPath')} detail={label('photoshopPathDetail')} placeholder={label('photoshopPathPlaceholder')} value={draft.photoshopPath} onChange={(value) => updateDraft('photoshopPath', value)} />
+      <Field label={label('photoshopPath')} detail={label('photoshopPathDetail')} placeholder={label('photoshopPathPlaceholder')} browse={{ kind: 'file', extensions: ['exe'] }} browseLabel={label('browse')} value={draft.photoshopPath} onChange={(value) => updateDraft('photoshopPath', value)} />
       <div className="first-run-note"><ShieldCheck size={15} aria-hidden="true" /><span>{label('firstRunPhotoshopFallback')}</span></div>
     </div>
   )

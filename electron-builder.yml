@@ -6,6 +6,7 @@ directories:
 files:
   - out/**/*
   - package.json
+  - assets/wake-word/**/*
   - "!node_modules/uiohook-napi/prebuilds/darwin-*/**"
   - "!node_modules/uiohook-napi/prebuilds/linux-*/**"
   - "!node_modules/uiohook-napi/prebuilds/win32-arm64/**"

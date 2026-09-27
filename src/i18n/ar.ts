@@ -83,6 +83,7 @@ export const ar = {
   vaultPathDetail: 'مسار Obsidian Vault الذي سيصبح عقل الشركة.',
   vaultPathPlaceholder: 'C:\\Users\\you\\Documents\\Vault',
   photoshopPath: 'مسار Photoshop',
+  browse: 'اختار…',
   photoshopPathDetail: 'المسار الكامل الاختياري لملف Photoshop.exe لسير العمل الإبداعي لاحقًا.',
   photoshopPathPlaceholder: 'C:\\Program Files\\Adobe\\…\\Photoshop.exe',
   searchSection: 'البحث',

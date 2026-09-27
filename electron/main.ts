@@ -22,6 +22,7 @@ import { checkForUpdate, type UpdateCheckResult } from './core/octa/update'
 import { AutoUpdateController } from './core/octa/auto-update'
 import { AppUpdateController, settlePendingAppUpdate } from './core/octa/app-update'
 import { computeRuntimeId } from './core/octa/runtime-id'
+import { detectObsidianVault, ensureWakeWordModels, normalizePathSettings } from './core/octa/paths'
 import { findFullInstallerFeed } from './core/octa/update'
 import {
   runGuidedInstall,
@@ -298,7 +299,7 @@ function emitVoiceAudio(event: VoiceAudioEvent): void {
 }
 
 function normalizeSettingsUpdate(update: Partial<AppSettings>): Partial<AppSettings> {
-  const next = { ...update }
+  const next = normalizePathSettings(update)
   if (update.pushToTalkKey !== undefined && update.hotkey === undefined) next.hotkey = update.pushToTalkKey
   if (update.hotkey !== undefined && update.pushToTalkKey === undefined) next.pushToTalkKey = update.hotkey
   return next
@@ -1011,6 +1012,20 @@ function registerIpc(): void {
     requireDocuments().removeBrand(id)
     return requireDocuments().listBrands()
   })
+  ipcMain.handle('dialog:pickPath', async (_event, request: unknown): Promise<string | null> => {
+    const options = request && typeof request === 'object' ? request as { kind?: unknown; extensions?: unknown; defaultPath?: unknown } : {}
+    const folder = options.kind === 'folder'
+    const extensions = Array.isArray(options.extensions) ? options.extensions.filter((value): value is string => typeof value === 'string' && /^[a-z0-9]{1,8}$/i.test(value)) : []
+    const selected = await dialog.showOpenDialog({
+      properties: [folder ? 'openDirectory' : 'openFile'],
+      ...(typeof options.defaultPath === 'string' && options.defaultPath ? { defaultPath: options.defaultPath } : {}),
+      ...(!folder && extensions.length > 0 ? { filters: [{ name: extensions.join(', '), extensions }] } : {})
+    })
+    return selected.canceled ? null : selected.filePaths[0] ?? null
+  })
+
+  ipcMain.handle('setup:detectVault', (): string | null => detectObsidianVault())
+
   ipcMain.handle('brands:pickSignature', async (): Promise<string | null> => {
     const selected = await dialog.showOpenDialog({
       properties: ['openFile'],
@@ -1223,6 +1238,14 @@ async function createAutoUpdate(): Promise<AutoUpdateController | null> {
 async function start(): Promise<void> {
   repository = new SettingsRepository(join(octaHome, 'octa.db'))
   autoUpdate = await createAutoUpdate()
+  try {
+    const settings = repository.getSettings()
+    const modelPath = settings.wakeWordModelPath.trim() || join(octaHome, 'models', 'octa.onnx')
+    const restored = ensureWakeWordModels(modelPath, join(app.getAppPath(), 'assets', 'wake-word'))
+    if (restored.length > 0) console.log('[wake-word] restored bundled models:', restored.join(', '))
+  } catch (error) {
+    console.error('[wake-word] could not restore bundled models:', error instanceof Error ? error.message : error)
+  }
   if (app.isPackaged) {
     const updatesDir = join(octaHome, 'updates')
     const settled = settlePendingAppUpdate(updatesDir, app.getVersion(), process.resourcesPath)

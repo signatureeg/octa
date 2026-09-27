@@ -83,6 +83,7 @@ export const en = {
   vaultPathDetail: 'Path to the Obsidian vault that will become the company brain.',
   vaultPathPlaceholder: 'C:\\Users\\you\\Documents\\Vault',
   photoshopPath: 'Photoshop path',
+  browse: 'Browse…',
   photoshopPathDetail: 'Optional full path to Photoshop.exe for future creative workflows.',
   photoshopPathPlaceholder: 'C:\\Program Files\\Adobe\\…\\Photoshop.exe',
   searchSection: 'Research',
