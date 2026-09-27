@@ -15,6 +15,7 @@ import {
   statusColor
 } from './map'
 import type { MapDepartment, MapSkillStatus } from './map'
+import { departmentLabel } from './map'
 
 const MAP_STATUS_KEYS: Record<MapSkillStatus, TranslationKey> = {
   never: 'mapStatusNever',
@@ -24,21 +25,6 @@ const MAP_STATUS_KEYS: Record<MapSkillStatus, TranslationKey> = {
   running: 'jobStatusRunning'
 }
 
-const DEPARTMENT_KEYS: Record<MapDepartment, TranslationKey> = {
-  sales: 'mapDepartmentSales',
-  deals: 'mapDepartmentDeals',
-  marketing: 'mapDepartmentMarketing',
-  design: 'mapDepartmentDesign',
-  operations: 'mapDepartmentOperations',
-  intelligence: 'mapDepartmentIntelligence',
-  customer: 'mapDepartmentCustomer',
-  backoffice: 'mapDepartmentBackoffice',
-  engineering: 'mapDepartmentEngineering',
-  thinking: 'mapDepartmentThinking',
-  documents: 'mapDepartmentDocuments',
-  commerce: 'mapDepartmentCommerce',
-  'personal-os': 'mapDepartmentPersonalOs'
-}
 
 const AUTONOMY_KEYS: Record<Skill['autonomy'], TranslationKey> = {
   auto: 'skillAutonomyAuto',
@@ -79,10 +65,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function departmentLabel(department: string, locale: Locale): string {
-  const key = DEPARTMENT_KEYS[department as MapDepartment]
-  return key ? t(key, locale) : t('mapDepartmentOther', locale)
-}
 
 function statusLabel(status: MapSkillStatus, locale: Locale): string {
   return t(MAP_STATUS_KEYS[status], locale)
@@ -320,9 +302,12 @@ export function MapPage({ locale }: { locale: Locale }): React.JSX.Element {
               const status = mapJobStatus(latest.get(node.skill.name)?.status)
               const color = statusColor(status)
               const autonomy = autonomyLabel(node.skill, locale)
-              const rightAligned = node.x >= layout.center.x
-              const badgeWidth = Math.max(24, autonomy.length * 4.8 + 10)
-              const badgeX = rightAligned ? node.x + 13 : node.x - 13 - badgeWidth
+              // Labels point outward along the node's ray; on the left half they are flipped so they read left-to-right.
+              const angle = node.angle ?? 0
+              const leftHalf = Math.cos(angle) < 0
+              const degrees = (angle * 180) / Math.PI + (leftHalf ? 180 : 0)
+              const labelX = node.x + Math.cos(angle) * (node.radius + 7)
+              const labelY = node.y + Math.sin(angle) * (node.radius + 7)
               const onKeyDown = (event: React.KeyboardEvent<SVGGElement>): void => {
                 if (event.key !== 'Enter' && event.key !== ' ') return
                 event.preventDefault()
@@ -346,29 +331,15 @@ export function MapPage({ locale }: { locale: Locale }): React.JSX.Element {
                   <circle className="map-skill-dot" cx={node.x} cy={node.y} fill={color} r={node.radius} />
                   <text
                     className="map-skill-label"
-                    dominantBaseline="middle"
-                    textAnchor={node.x >= layout.center.x ? 'start' : 'end'}
-                    x={node.x + (node.x >= layout.center.x ? 13 : -13)}
-                    y={node.y}
+                    dominantBaseline="central"
+                    textAnchor={leftHalf ? 'end' : 'start'}
+                    transform={`rotate(${degrees.toFixed(2)} ${labelX.toFixed(1)} ${labelY.toFixed(1)})`}
+                    x={labelX}
+                    y={labelY}
                   >
+                    {leftHalf && <tspan className="map-autonomy-label">{`${autonomy}  `}</tspan>}
                     {clipped(node.skill.name, 24)}
-                  </text>
-                  <rect
-                    className="map-autonomy-badge"
-                    height="12"
-                    rx="5"
-                    width={badgeWidth}
-                    x={badgeX}
-                    y={node.y + 8}
-                  />
-                  <text
-                    className="map-autonomy-label"
-                    dominantBaseline="middle"
-                    textAnchor="middle"
-                    x={badgeX + badgeWidth / 2}
-                    y={node.y + 14}
-                  >
-                    {autonomy}
+                    {!leftHalf && <tspan className="map-autonomy-label">{`  ${autonomy}`}</tspan>}
                   </text>
                   <title>{`${node.skill.name} · ${statusLabel(status, locale)} · ${autonomyLabel(node.skill, locale)}`}</title>
                 </g>
@@ -377,7 +348,7 @@ export function MapPage({ locale }: { locale: Locale }): React.JSX.Element {
 
             <g className="map-center-node">
               <circle cx={layout.center.x} cy={layout.center.y} fill="url(#map-center-gradient)" r={layout.center.radius} />
-              <text dominantBaseline="middle" textAnchor="middle" x={layout.center.x} y={layout.center.y - 2}>{layout.center.label}</text>
+              <text dominantBaseline="middle" textAnchor="middle" x={layout.center.x} y={layout.center.y - 2}>{label('mapCenterTitle')}</text>
               <text className="map-center-subtitle" dominantBaseline="middle" textAnchor="middle" x={layout.center.x} y={layout.center.y + 15}>{label('mapCenterSubtitle')}</text>
             </g>
 

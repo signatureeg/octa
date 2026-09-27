@@ -131,7 +131,7 @@ export function BrainPage({ locale }: { locale: Locale }): React.JSX.Element {
           </header>
           <div className="brain-file-list">
             {brainStatus.files.length === 0 ? (
-              <p className="brain-empty">{label('brainNoProposals')}</p>
+              <p className="brain-empty">{label('brainNoFiles')}</p>
             ) : (
               brainStatus.files.map((file) => (
                 <div className="brain-file" key={file}>
@@ -141,7 +141,7 @@ export function BrainPage({ locale }: { locale: Locale }): React.JSX.Element {
               ))
             )}
           </div>
-          {brainStatus.mirrorPath && <code className="brain-path">{brainStatus.mirrorPath}</code>}
+          {brainStatus.mirrorPath && <code className="brain-path" dir="ltr">{brainStatus.mirrorPath}</code>}
         </section>
 
         <section className="glass brain-card">
@@ -195,7 +195,7 @@ export function BrainPage({ locale }: { locale: Locale }): React.JSX.Element {
           ) : (
             <div className="brain-intake-flow">
               <p className="brain-question-arabic">{question.arabic}</p>
-              <p className="brain-question-english">{t(question.translationKey as TranslationKey, locale)}</p>
+              {locale !== 'ar' && <p className="brain-question-english">{t(question.translationKey as TranslationKey, locale)}</p>}
               <textarea
                 aria-label={t(question.translationKey as TranslationKey, locale)}
                 disabled={busy}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Ban, Check, Circle, Play, RefreshCw } from 'lucide-react'
+import { Ban, Check, Play, RefreshCw } from 'lucide-react'
 import type { Locale, TranslationKey } from '../i18n'
 import { t } from '../i18n'
 import type { JobEvent as RuntimeJobEvent, JobRecord as RuntimeJobRecord, JobStatus } from '../../electron/types'
@@ -241,7 +241,6 @@ export function JobsPage({ locale }: { locale: Locale }): React.JSX.Element {
               <span className="job-card-eyebrow">{label('jobRuns')}</span>
               <h2>{jobs.length}</h2>
             </div>
-            <Circle size={12} />
           </div>
           <div className="job-list-items">
             {jobs.length === 0 && <p className="empty-state">{label('noJobs')}</p>}
@@ -255,7 +254,7 @@ export function JobsPage({ locale }: { locale: Locale }): React.JSX.Element {
                 <span className={`job-status-dot status-${job.status}`} />
                 <span className="job-list-copy">
                   <strong>{job.skill ?? job.runner}</strong>
-                  <small>{job.runner} · {job.id.slice(0, 8)}</small>
+                  <small>{job.runner} · <span dir="ltr">{job.id.slice(-8)}</span></small>
                 </span>
                 <span className={`job-status status-${job.status}`}>{label(statusKey(job.status))}</span>
               </button>

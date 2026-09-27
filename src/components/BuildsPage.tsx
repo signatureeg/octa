@@ -134,7 +134,7 @@ export function BuildsPage({ locale }: { locale: Locale }): React.JSX.Element {
           <h1>{label('buildsTitle')}</h1>
           <p>{label('buildsIntro')}</p>
         </div>
-        <button className="ghost-button" type="button" onClick={() => void refresh()} disabled={loading}>
+        <button className="quiet-button" type="button" onClick={() => void refresh()} disabled={loading}>
           <RefreshCw size={14} className={loading ? 'spin' : ''} /> {label('buildRefresh')}
         </button>
       </header>
@@ -164,10 +164,10 @@ export function BuildsPage({ locale }: { locale: Locale }): React.JSX.Element {
 
       {error && <p className="inline-error"><strong>{label('buildError')}:</strong> {error}</p>}
 
-      <div className="builds-layout">
+      <div className={`builds-layout${builds.length === 0 ? ' builds-layout-empty' : ''}`}>
         <section className="glass builds-list">
           <div className="build-section-heading">
-            <div><p className="job-card-eyebrow">{label('builds')}</p><h2>{label('buildsTitle')}</h2></div>
+            <div><h2>{label('buildsTitle')}</h2></div>
             <GitBranch size={17} />
           </div>
           <div className="build-list-items">
@@ -182,8 +182,7 @@ export function BuildsPage({ locale }: { locale: Locale }): React.JSX.Element {
           </div>
         </section>
 
-        <section className="glass build-detail">
-          {!selected && <p className="empty-state">{label('buildNoBuilds')}</p>}
+        {builds.length > 0 && <section className="glass build-detail">
           {selected && (
             <>
               <div className="build-detail-heading">
@@ -213,8 +212,8 @@ export function BuildsPage({ locale }: { locale: Locale }): React.JSX.Element {
               </div>
               <div className="build-acceptance"><h3>{label('buildAcceptance')}</h3>{selected.spec.acceptance.map((item) => <p key={item}>✓ {item}</p>)}</div>
               <div className="build-actions">
-                {(selected.status === 'failed' || selected.status === 'stuck') && <button className="ghost-button" type="button" onClick={() => void runAction(() => window.octa.builds.resume(selected.id))}>{label('buildResume')}</button>}
-                <button className="ghost-button" type="button" onClick={review}>{label('buildReview')}</button>
+                {(selected.status === 'failed' || selected.status === 'stuck') && <button className="quiet-button" type="button" onClick={() => void runAction(() => window.octa.builds.resume(selected.id))}>{label('buildResume')}</button>}
+                <button className="quiet-button" type="button" onClick={review}>{label('buildReview')}</button>
                 {selected.status === 'ready_to_merge' && <button className="primary-button" type="button" onClick={() => void runAction(() => window.octa.builds.merge(selected.id))}>{label('buildMerge')}</button>}
                 {selected.status !== 'merged' && <button className="danger-button" type="button" onClick={() => void runAction(() => window.octa.builds.discard(selected.id))}>{label('buildDiscard')}</button>}
               </div>
@@ -222,11 +221,11 @@ export function BuildsPage({ locale }: { locale: Locale }): React.JSX.Element {
               {reviewText && <pre className="build-output">{reviewText}</pre>}
             </>
           )}
-        </section>
+        </section>}
       </div>
       <section className="glass build-analysis">
-        <div><h2>{label('buildAnalyze')}</h2><p>{label('buildsIntro')}</p></div>
-        <button className="ghost-button" type="button" onClick={analyze}><Sparkles size={14} /> {label('buildAnalyze')}</button>
+        <div><h2>{label('buildAnalyze')}</h2><p>{label('buildAnalyzeIntro')}</p></div>
+        <button className="quiet-button" type="button" onClick={analyze}><Sparkles size={14} /> {label('buildAnalyze')}</button>
         {analysisText && <pre className="build-output">{analysisText}</pre>}
       </section>
     </main>

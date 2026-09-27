@@ -1,5 +1,7 @@
 import type { JobOutput, JobRecord, JobStatus } from '../../electron/types'
 import type { Skill } from '../../electron/core/skills/registry'
+import type { Locale, TranslationKey } from '../i18n'
+import { t } from '../i18n'
 
 export const MAP_DEPARTMENTS = [
   'sales',
@@ -18,6 +20,28 @@ export const MAP_DEPARTMENTS = [
 ] as const
 
 export type MapDepartment = (typeof MAP_DEPARTMENTS)[number]
+
+const DEPARTMENT_KEYS: Record<MapDepartment, TranslationKey> = {
+  sales: 'mapDepartmentSales',
+  deals: 'mapDepartmentDeals',
+  marketing: 'mapDepartmentMarketing',
+  design: 'mapDepartmentDesign',
+  operations: 'mapDepartmentOperations',
+  intelligence: 'mapDepartmentIntelligence',
+  customer: 'mapDepartmentCustomer',
+  backoffice: 'mapDepartmentBackoffice',
+  engineering: 'mapDepartmentEngineering',
+  thinking: 'mapDepartmentThinking',
+  documents: 'mapDepartmentDocuments',
+  commerce: 'mapDepartmentCommerce',
+  'personal-os': 'mapDepartmentPersonalOs'
+}
+
+/** Localised department name; shared by the Map and Skills pages. */
+export function departmentLabel(department: string, locale: Locale): string {
+  const key = DEPARTMENT_KEYS[department as MapDepartment]
+  return key ? t(key, locale) : t('mapDepartmentOther', locale)
+}
 export type MapSkillStatus = 'never' | 'ok' | 'failed' | 'needs_approval' | 'running'
 
 export const MAP_STATUS_COLORS: Readonly<Record<MapSkillStatus, string>> = {
@@ -41,6 +65,8 @@ export interface MapLayoutNode {
   x: number
   y: number
   radius: number
+  /** Direction from the center in radians (department and skill nodes). */
+  angle?: number
   department?: string
   skill?: Skill
 }
@@ -79,8 +105,13 @@ export interface SkillRunForm {
   fields: readonly SkillRunField[]
 }
 
-const DEFAULT_MAP_WIDTH = 1_440
-const DEFAULT_MAP_HEIGHT = 980
+const DEFAULT_MAP_WIDTH = 0
+const DEFAULT_MAP_HEIGHT = 0
+/** Distance along the ring between two neighbouring skills; ~ one label line at the rendered scale. */
+const SLOT_SPACING = 17
+const MIN_SKILL_RADIUS = 260
+/** Room outside the ring for a label (24 mono chars) plus its autonomy tag. */
+const LABEL_REACH = 230
 
 function compareNames(left: string, right: string): number {
   if (left < right) return -1
@@ -89,7 +120,7 @@ function compareNames(left: string, right: string): number {
 }
 
 function safeDimension(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
 }
 
 function visibleSkills(skills: readonly Skill[]): Skill[] {
@@ -129,61 +160,103 @@ export function layoutMap(skills: readonly Skill[], options: MapLayoutOptions = 
     .filter((department) => !(MAP_DEPARTMENTS as readonly string[]).includes(department))
     .sort(compareNames)
   const departmentNames = [...MAP_DEPARTMENTS, ...extraDepartments]
-  const departmentRadius = Math.min(width, height) * 0.18
-  const skillRadius = Math.min(width, height) * 0.27
-  const departmentStep = (Math.PI * 2) / departmentNames.length
+
+  // Radial tree: every skill sits on one ring, grouped into department sectors with a gap
+  // between sectors, and its label points straight outward. Labels never cross each other,
+  // which the old fan-of-rows layout could not guarantee once a department had ~10 skills.
+  const gapSlots = 1.5
+  const sectorSlots = departmentNames.map((department) => Math.max(1, groups.get(department)?.length ?? 0) + gapSlots)
+  const totalSlots = sectorSlots.reduce((sum, value) => sum + value, 0)
+  const slotAngle = (Math.PI * 2) / totalSlots
+  const skillRadius = Math.max(MIN_SKILL_RADIUS, (totalSlots * SLOT_SPACING) / (Math.PI * 2))
+  const departmentRadius = skillRadius * 0.55
+  const size = Math.max(width, height, Math.ceil((skillRadius + LABEL_REACH) * 2))
+  center.x = size / 2
+  center.y = size / 2
   const startAngle = -Math.PI / 2
   const departments: MapLayoutNode[] = []
   const skillNodes: MapLayoutNode[] = []
   const links: MapLayoutLink[] = []
 
+  let cursor = 0
   departmentNames.forEach((department, departmentIndex) => {
-    const angle = startAngle + departmentIndex * departmentStep
+    const group = groups.get(department) ?? []
+    const slots = sectorSlots[departmentIndex]
+    const firstSkill = cursor + gapSlots / 2 + 0.5
+    const middle = startAngle + (cursor + slots / 2) * slotAngle
     const departmentNode: MapLayoutNode = {
       id: `department:${department}`,
       type: 'department',
       label: department,
-      x: center.x + Math.cos(angle) * departmentRadius,
-      y: center.y + Math.sin(angle) * departmentRadius,
-      radius: 29,
+      x: center.x + Math.cos(middle) * departmentRadius,
+      y: center.y + Math.sin(middle) * departmentRadius,
+      radius: 44,
+      angle: middle,
       department
     }
     departments.push(departmentNode)
     links.push({ source: center.id, target: departmentNode.id, type: 'center-department' })
 
-    const group = groups.get(department) ?? []
-    const columns = Math.max(1, Math.min(8, Math.ceil(Math.sqrt(group.length))))
-    const angleSpan = Math.min(departmentStep * 0.72, Math.PI / 5)
-    const angleStep = columns === 1 ? 0 : angleSpan / (columns - 1)
-
     group.forEach((skill, skillIndex) => {
-      const column = skillIndex % columns
-      const row = Math.floor(skillIndex / columns)
-      const skillAngle = angle + (columns === 1 ? 0 : (column - (columns - 1) / 2) * angleStep)
+      const angle = startAngle + (firstSkill + skillIndex) * slotAngle
       const node: MapLayoutNode = {
         id: `skill:${skill.name}`,
         type: 'skill',
         label: skill.name,
-        x: center.x + Math.cos(skillAngle) * (skillRadius + row * 30),
-        y: center.y + Math.sin(skillAngle) * (skillRadius + row * 30),
-        radius: 8,
+        x: center.x + Math.cos(angle) * skillRadius,
+        y: center.y + Math.sin(angle) * skillRadius,
+        radius: 7,
+        angle,
         department,
         skill
       }
       skillNodes.push(node)
       links.push({ source: departmentNode.id, target: node.id, type: 'department-skill' })
     })
+    cursor += slots
   })
 
+  spreadDepartments(departments, center, departmentRadius)
+
   return {
-    width,
-    height,
+    width: size,
+    height: size,
     center,
     departments,
     skills: skillNodes,
     nodes: [center, ...departments, ...skillNodes],
     links
   }
+}
+
+/**
+ * Small departments get narrow sectors, so their hub circles can collide. Push neighbouring hubs
+ * apart along the ring until each pair is at least one diameter (plus a margin) apart.
+ */
+function spreadDepartments(departments: MapLayoutNode[], center: MapLayoutNode, radius: number): void {
+  if (departments.length < 2) return
+  const minGap = (departments[0].radius * 2 + 10) / radius
+  const angles = departments.map((node) => node.angle ?? 0)
+  for (let pass = 0; pass < 200; pass++) {
+    let moved = false
+    for (let index = 0; index < angles.length; index++) {
+      const next = (index + 1) % angles.length
+      let gap = angles[next] - angles[index]
+      if (next === 0) gap += Math.PI * 2
+      if (gap < minGap) {
+        const push = (minGap - gap) / 2 + 1e-4
+        angles[index] -= push
+        angles[next] += push
+        moved = true
+      }
+    }
+    if (!moved) break
+  }
+  departments.forEach((node, index) => {
+    node.angle = angles[index]
+    node.x = center.x + Math.cos(angles[index]) * radius
+    node.y = center.y + Math.sin(angles[index]) * radius
+  })
 }
 
 function jobTimestamp(job: JobRecord): number {

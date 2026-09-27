@@ -56,9 +56,15 @@ function installLabel(kind: GuidedInstallKind, locale: Locale): string {
   return t(kind === 'python' ? 'healthInstallPython' : 'healthInstallPlaywright', locale)
 }
 
+/** Health fixes are written "English / عربي"; show the half that matches the UI language. */
+function localizedFix(fix: string, locale: Locale): string {
+  const [english, arabic] = fix.split(' / ')
+  return (locale === 'ar' ? arabic : english)?.trim() || fix
+}
+
 function actionFor(check: HealthCheckEntry): 'python' | 'playwright' | 'setup' | null {
-  if (check.id === 'python') return 'python'
-  if (check.id === 'playwright') return 'playwright'
+  if (check.id === 'python') return check.ok ? null : 'python'
+  if (check.id === 'playwright') return check.ok ? null : 'playwright'
   return check.fix ? 'setup' : null
 }
 
@@ -156,7 +162,7 @@ export function HealthPage({
 
   const body = report ? (
     <>
-      <div className="health-summary" role="status">
+      <div className={`health-summary${report.ok ? '' : ' health-summary-failed'}`} role="status">
         {report.ok ? <Check size={17} aria-hidden="true" /> : <CircleAlert size={17} aria-hidden="true" />}
         <div>
           <strong>{report.ok ? label('healthPassed') : label('healthNeedsAttention')}</strong>
@@ -171,8 +177,8 @@ export function HealthPage({
             </span>
             <div className="health-row-copy">
               <strong>{label(HEALTH_LABELS[check.id])}</strong>
-              <span>{check.detail}</span>
-              {check.fix && <small><Wrench size={12} aria-hidden="true" /> {check.fix}</small>}
+              <span><bdi>{check.detail}</bdi></span>
+              {check.fix && <small><Wrench size={12} aria-hidden="true" /> <bdi>{localizedFix(check.fix, locale)}</bdi></small>}
             </div>
             <div className="health-row-end">
               <span className={`health-status ${check.ok ? 'health-status-ok' : 'health-status-failed'}`}>{checkStatus(check)}</span>

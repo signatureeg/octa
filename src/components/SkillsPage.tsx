@@ -3,6 +3,7 @@ import { BookOpen, Filter, Library, Play, RefreshCw, Search, X } from 'lucide-re
 import type { Skill, SkillVerdict } from '../../electron/core/skills/registry'
 import type { Locale, TranslationKey } from '../i18n'
 import { t } from '../i18n'
+import { departmentLabel } from './map'
 
 function interpolate(value: string, values: Record<string, string | number>): string {
   return value.replace(/\{(\w+)\}/g, (_match, key: string) => String(values[key] ?? ''))
@@ -144,7 +145,7 @@ export function SkillsPage({ locale }: { locale: Locale }): React.JSX.Element {
           <span className="sr-only">{label('allDepartments')}</span>
           <select aria-label={label('allDepartments')} onChange={(event) => setDepartment(event.target.value)} value={department}>
             <option value="">{label('allDepartments')}</option>
-            {departments.map((item) => <option key={item} value={item}>{item}</option>)}
+            {departments.map((item) => <option key={item} value={item}>{departmentLabel(item, locale)}</option>)}
           </select>
         </label>
         <label className="skills-reference-toggle">
@@ -163,7 +164,7 @@ export function SkillsPage({ locale }: { locale: Locale }): React.JSX.Element {
                 <span className="skill-number">{String(index + 1).padStart(2, '0')}</span>
                 <div>
                   <h2>{skill.name}</h2>
-                  <p>{skill.department}</p>
+                  <p>{departmentLabel(skill.department, locale)}</p>
                 </div>
               </div>
               <BookOpen size={17} />
@@ -172,10 +173,10 @@ export function SkillsPage({ locale }: { locale: Locale }): React.JSX.Element {
               <span className={`skill-badge badge-${skill.verdict}`}>{label(verdictKey(skill.verdict))}</span>
               <span className="skill-badge badge-autonomy">{label(autonomyKey(skill.autonomy))}</span>
             </div>
-            <p className="skill-description">{skill.description}</p>
-            <p className="skill-use">{skill.use}</p>
+            <p className="skill-description" dir="auto">{skill.description}</p>
+            <p className="skill-use" dir="auto">{skill.use}</p>
             <footer className="skill-card-footer">
-              <code>{skill.runner}</code>
+              <code dir="ltr">{skill.runner}</code>
               {skill.verdict === 'reference' ? (
                 <button className="quiet-button" disabled type="button">
                   <BookOpen size={14} /> {label('skillReference')}

@@ -112,7 +112,7 @@ export function SettingsPage({
   const refreshBrowserStatus = async (): Promise<void> => {
     if (!window.octa?.research) return
     try {
-      setBrowserStatus((await window.octa.research.status()).browser)
+      setBrowserStatus((await window.octa.research.status())?.browser ?? null)
       setBrowserError('')
     } catch (error) {
       setBrowserError(error instanceof Error ? error.message : String(error))
@@ -154,7 +154,7 @@ export function SettingsPage({
     try {
       const result = await onAiTest()
       setAiState('success')
-      setAiMessage(`${label('aiConnected')} · ${result.provider} · ${result.latencyMs} ms`)
+      setAiMessage(`${label('aiConnected')} · ${result.provider} · ${result.latencyMs} ${label('millisecondsShort')}`)
     } catch (error) {
       setAiState('error')
       setAiMessage(error instanceof Error ? error.message : String(error))
@@ -237,6 +237,7 @@ export function SettingsPage({
           <div className="settings-fields">
             <SettingField icon={<KeyRound size={18} />} label={label('geminiApiKey')} detail={label('geminiApiKeyDetail')}>
               <input
+                dir="ltr"
                 aria-label={label('geminiApiKey')}
                 autoComplete="off"
                 onChange={(event) => setValue('geminiApiKey', event.target.value)}
@@ -248,6 +249,7 @@ export function SettingsPage({
             </SettingField>
             <SettingField icon={<KeyRound size={18} />} label={label('groqApiKey')} detail={label('groqApiKeyDetail')}>
               <input
+                dir="ltr"
                 aria-label={label('groqApiKey')}
                 autoComplete="off"
                 onChange={(event) => setValue('groqApiKey', event.target.value)}
@@ -266,13 +268,13 @@ export function SettingsPage({
             {draft.aiProvider === 'vertex' && (
               <>
                 <SettingField icon={<Globe2 size={18} />} label={label('vertexProjectId')} detail={label('vertexProjectIdDetail')}>
-                  <input aria-label={label('vertexProjectId')} onChange={(event) => setValue('vertexProjectId', event.target.value)} placeholder={label('vertexProjectIdPlaceholder')} spellCheck={false} value={draft.vertexProjectId} />
+                  <input dir="ltr" aria-label={label('vertexProjectId')} onChange={(event) => setValue('vertexProjectId', event.target.value)} placeholder={label('vertexProjectIdPlaceholder')} spellCheck={false} value={draft.vertexProjectId} />
                 </SettingField>
                 <SettingField icon={<KeyRound size={18} />} label={label('vertexKeyPath')} detail={label('vertexKeyPathDetail')}>
-                  <input aria-label={label('vertexKeyPath')} onChange={(event) => setValue('vertexKeyPath', event.target.value)} placeholder={label('vertexKeyPathPlaceholder')} spellCheck={false} value={draft.vertexKeyPath} />
+                  <input dir="ltr" aria-label={label('vertexKeyPath')} onChange={(event) => setValue('vertexKeyPath', event.target.value)} placeholder={label('vertexKeyPathPlaceholder')} spellCheck={false} value={draft.vertexKeyPath} />
                 </SettingField>
                 <SettingField icon={<Globe2 size={18} />} label={label('vertexLocation')} detail={label('vertexLocationDetail')}>
-                  <input aria-label={label('vertexLocation')} onChange={(event) => setValue('vertexLocation', event.target.value)} placeholder={label('vertexLocationPlaceholder')} spellCheck={false} value={draft.vertexLocation} />
+                  <input dir="ltr" aria-label={label('vertexLocation')} onChange={(event) => setValue('vertexLocation', event.target.value)} placeholder={label('vertexLocationPlaceholder')} spellCheck={false} value={draft.vertexLocation} />
                 </SettingField>
               </>
             )}
@@ -290,13 +292,13 @@ export function SettingsPage({
           <SectionHeading icon={<Mic size={19} />} title={label('voiceSection')} detail={label('voiceSectionDetail')} />
           <div className="settings-fields">
             <SettingField icon={<Mic size={18} />} label={label('voiceLiveModel')} detail={label('voiceLiveModelDetail')}>
-              <input aria-label={label('voiceLiveModel')} readOnly spellCheck={false} value={draft.geminiLiveModel || label('notAvailable')} />
+              <input dir="ltr" aria-label={label('voiceLiveModel')} readOnly spellCheck={false} value={draft.geminiLiveModel || label('notAvailable')} />
             </SettingField>
             <SettingField icon={<Wrench size={18} />} label={label('voiceLiveModelOverride')} detail={label('voiceLiveModelOverrideDetail')}>
-              <input aria-label={label('voiceLiveModelOverride')} onChange={(event) => setValue('geminiLiveModelOverride', event.target.value)} placeholder={label('notAvailable')} spellCheck={false} value={draft.geminiLiveModelOverride} />
+              <input dir="ltr" aria-label={label('voiceLiveModelOverride')} onChange={(event) => setValue('geminiLiveModelOverride', event.target.value)} placeholder={label('notAvailable')} spellCheck={false} value={draft.geminiLiveModelOverride} />
             </SettingField>
             <SettingField icon={<FolderOpen size={18} />} label={label('wakeWordModelPath')} detail={label('wakeWordModelPathDetail')}>
-              <input aria-label={label('wakeWordModelPath')} onChange={(event) => setValue('wakeWordModelPath', event.target.value)} spellCheck={false} value={draft.wakeWordModelPath} />
+              <input dir="ltr" aria-label={label('wakeWordModelPath')} onChange={(event) => setValue('wakeWordModelPath', event.target.value)} spellCheck={false} value={draft.wakeWordModelPath} />
             </SettingField>
             <SettingField icon={<Mic size={18} />} label={label('wakeWordSensitivity')} detail={label('wakeWordSensitivityDetail')}>
               <input aria-label={label('wakeWordSensitivity')} max="1" min="0" onChange={(event) => setValue('wakeWordSensitivity', Number(event.target.value))} step="0.01" type="range" value={draft.wakeWordSensitivity} />
@@ -304,14 +306,14 @@ export function SettingsPage({
             <SettingField icon={<Mic size={18} />} label={label('wakeGreeting')} detail={label('wakeGreetingDetail')}>
               <input aria-label={label('wakeGreeting')} onChange={(event) => setValue('wakeGreeting', event.target.value)} value={draft.wakeGreeting} />
             </SettingField>
-            <SettingField icon={<MousePointer2 size={18} />} label={label('triggerType')} detail={label('pushToTalkKeyDetail')}>
+            <SettingField icon={<MousePointer2 size={18} />} label={label('triggerType')} detail={label('triggerTypeDetail')}>
               <select aria-label={label('triggerType')} onChange={(event) => setValue('triggerType', event.target.value as AppSettings['triggerType'])} value={draft.triggerType}>
                 <option value="keyboard">{label('keyboardTrigger')}</option>
                 <option value="mouse">{label('mouseTrigger')}</option>
               </select>
             </SettingField>
             {draft.triggerType === 'mouse' ? (
-              <SettingField icon={<MousePointer2 size={18} />} label={label('mouseButton')} detail={label('pushToTalkKeyDetail')}>
+              <SettingField icon={<MousePointer2 size={18} />} label={label('mouseButton')} detail={label('mouseButtonDetail')}>
                 <select aria-label={label('mouseButton')} onChange={(event) => setValue('mouseButton', Number(event.target.value) as AppSettings['mouseButton'])} value={draft.mouseButton}>
                   <option value="3">3</option>
                   <option value="4">4</option>
@@ -320,7 +322,7 @@ export function SettingsPage({
               </SettingField>
             ) : (
               <SettingField icon={<KeyRound size={18} />} label={label('pushToTalkKey')} detail={label('pushToTalkKeyDetail')}>
-                <input aria-label={label('pushToTalkKey')} onChange={(event) => {
+                <input dir="ltr" aria-label={label('pushToTalkKey')} onChange={(event) => {
                   setDraft((current) => ({ ...current, pushToTalkKey: event.target.value, hotkey: event.target.value }))
                   setSaveState('idle')
                 }} spellCheck={false} value={draft.pushToTalkKey} />
@@ -337,10 +339,10 @@ export function SettingsPage({
           <SectionHeading icon={<BellRing size={19} />} title={label('notificationsSection')} detail={label('notificationsSectionDetail')} />
           <div className="settings-fields">
             <SettingField icon={<BellRing size={18} />} label={label('ntfyTopic')} detail={label('ntfyTopicDetail')}>
-              <input aria-label={label('ntfyTopic')} autoComplete="off" onChange={(event) => setValue('ntfyTopic', event.target.value)} placeholder={label('ntfyTopicPlaceholder')} spellCheck={false} value={draft.ntfyTopic} />
+              <input dir="ltr" aria-label={label('ntfyTopic')} autoComplete="off" onChange={(event) => setValue('ntfyTopic', event.target.value)} placeholder={label('ntfyTopicPlaceholder')} spellCheck={false} value={draft.ntfyTopic} />
             </SettingField>
             <SettingField icon={<Globe2 size={18} />} label={label('ntfyServer')} detail={label('ntfyServerDetail')}>
-              <input aria-label={label('ntfyServer')} onChange={(event) => setValue('ntfyServer', event.target.value)} placeholder={label('ntfyServerPlaceholder')} spellCheck={false} type="url" value={draft.ntfyServer} />
+              <input dir="ltr" aria-label={label('ntfyServer')} onChange={(event) => setValue('ntfyServer', event.target.value)} placeholder={label('ntfyServerPlaceholder')} spellCheck={false} type="url" value={draft.ntfyServer} />
             </SettingField>
           </div>
           <div className="section-action-row">
@@ -361,16 +363,16 @@ export function SettingsPage({
           <SectionHeading icon={<FolderOpen size={19} />} title={label('pathsSection')} detail={label('pathsSectionDetail')} />
           <div className="settings-fields">
             <SettingField icon={<FolderOpen size={18} />} label={label('octaHomePath')} detail={label('octaHomePathDetail')}>
-              <input aria-label={label('octaHomePath')} onChange={(event) => setValue('octaHomePath', event.target.value)} placeholder={label('octaHomePathPlaceholder')} spellCheck={false} value={draft.octaHomePath} />
+              <input dir="ltr" aria-label={label('octaHomePath')} onChange={(event) => setValue('octaHomePath', event.target.value)} placeholder={label('octaHomePathPlaceholder')} spellCheck={false} value={draft.octaHomePath} />
             </SettingField>
             <SettingField icon={<FolderOpen size={18} />} label={label('skillsLibraryPath')} detail={label('skillsLibraryPathDetail')}>
-              <input aria-label={label('skillsLibraryPath')} onChange={(event) => setValue('skillsLibraryPath', event.target.value)} placeholder={label('skillsLibraryPathPlaceholder')} spellCheck={false} value={draft.skillsLibraryPath} />
+              <input dir="ltr" aria-label={label('skillsLibraryPath')} onChange={(event) => setValue('skillsLibraryPath', event.target.value)} placeholder={label('skillsLibraryPathPlaceholder')} spellCheck={false} value={draft.skillsLibraryPath} />
             </SettingField>
             <SettingField icon={<FolderOpen size={18} />} label={label('vaultPath')} detail={label('vaultPathDetail')}>
-              <input aria-label={label('vaultPath')} onChange={(event) => setValue('vaultPath', event.target.value)} placeholder={label('vaultPathPlaceholder')} spellCheck={false} value={draft.vaultPath} />
+              <input dir="ltr" aria-label={label('vaultPath')} onChange={(event) => setValue('vaultPath', event.target.value)} placeholder={label('vaultPathPlaceholder')} spellCheck={false} value={draft.vaultPath} />
             </SettingField>
             <SettingField icon={<Wrench size={18} />} label={label('photoshopPath')} detail={label('photoshopPathDetail')}>
-              <input aria-label={label('photoshopPath')} onChange={(event) => setValue('photoshopPath', event.target.value)} placeholder={label('photoshopPathPlaceholder')} spellCheck={false} value={draft.photoshopPath} />
+              <input dir="ltr" aria-label={label('photoshopPath')} onChange={(event) => setValue('photoshopPath', event.target.value)} placeholder={label('photoshopPathPlaceholder')} spellCheck={false} value={draft.photoshopPath} />
             </SettingField>
           </div>
         </section>
@@ -379,7 +381,7 @@ export function SettingsPage({
           <SectionHeading icon={<Github size={19} />} title={label('updatesSection')} detail={label('updatesSectionDetail')} />
           <div className="settings-fields">
             <SettingField icon={<Github size={18} />} label={label('updateRepository')} detail={label('updateRepositoryDetail')}>
-              <input aria-label={label('updateRepository')} onChange={(event) => setValue('updateRepository', event.target.value)} placeholder={label('updateRepositoryPlaceholder')} spellCheck={false} value={draft.updateRepository} />
+              <input dir="ltr" aria-label={label('updateRepository')} onChange={(event) => setValue('updateRepository', event.target.value)} placeholder={label('updateRepositoryPlaceholder')} spellCheck={false} value={draft.updateRepository} />
             </SettingField>
           </div>
         </section>
@@ -388,7 +390,7 @@ export function SettingsPage({
           <SectionHeading icon={<Search size={19} />} title={label('searchSection')} detail={label('searchSectionDetail')} />
           <div className="settings-fields">
             <SettingField icon={<Search size={18} />} label={label('braveSearchApiKey')} detail={label('braveSearchApiKeyDetail')}>
-              <input aria-label={label('braveSearchApiKey')} autoComplete="off" onChange={(event) => setValue('braveSearchApiKey', event.target.value)} placeholder={label('braveSearchApiKeyPlaceholder')} spellCheck={false} type="password" value={draft.braveSearchApiKey} />
+              <input dir="ltr" aria-label={label('braveSearchApiKey')} autoComplete="off" onChange={(event) => setValue('braveSearchApiKey', event.target.value)} placeholder={label('braveSearchApiKeyPlaceholder')} spellCheck={false} type="password" value={draft.braveSearchApiKey} />
             </SettingField>
           </div>
         </section>
@@ -426,17 +428,17 @@ export function SettingsPage({
           {challenge && (
             <div className="research-challenge" role="alert">
               <ShieldAlert size={16} />
-              <span>{label('researchChallengeMessage')} · {challenge.site}</span>
+              <span>{label('researchChallengeMessage')} · {['facebook', 'x', 'reddit'].includes(challenge.site) ? label(siteLabelKey(challenge.site as ResearchLoginSite)) : challenge.site}</span>
               <button className="quiet-button" onClick={() => void resolveChallenge()} type="button">{label('researchChallengeResolved')}</button>
             </div>
           )}
-          {browserError && <span className="inline-status error">{browserError}</span>}
+          {browserError && <span className="inline-status error" title={browserError}>{label('researchBrowserUnavailable')}</span>}
         </section>
 
         <section className="settings-section">
           <SectionHeading icon={<Palette size={19} />} title={label('appearanceSection')} detail={label('appearanceDetail')} />
           <div className="settings-fields">
-            <SettingField icon={draft.theme === 'dark' ? <Moon size={18} /> : <Sun size={18} />} label={label('theme')} detail={label('appearanceDetail')}>
+            <SettingField icon={draft.theme === 'dark' ? <Moon size={18} /> : <Sun size={18} />} label={label('theme')} detail={label('themeDetail')}>
               <select aria-label={label('theme')} onChange={(event) => setValue('theme', event.target.value as AppSettings['theme'])} value={draft.theme}>
                 <option value="dark">{label('dark')}</option>
                 <option value="light">{label('light')}</option>
