@@ -20,6 +20,9 @@ import { TimeTracker } from './core/time-tracking'
 import { matchTaskTrigger, splitTitleAndNotes } from './core/task-trigger'
 import { checkForUpdate, type UpdateCheckResult } from './core/octa/update'
 import { AutoUpdateController } from './core/octa/auto-update'
+import { AppUpdateController, settlePendingAppUpdate } from './core/octa/app-update'
+import { computeRuntimeId } from './core/octa/runtime-id'
+import { findFullInstallerFeed } from './core/octa/update'
 import {
   runGuidedInstall,
   runHealthChecks,
@@ -101,6 +104,8 @@ let mainWindow: BrowserWindow | undefined
 let overlayWindow: BrowserWindow | undefined
 let repository: SettingsRepository | undefined
 let autoUpdate: AutoUpdateController | null = null
+let appUpdate: AppUpdateController | null = null
+let lastUpdateCheck: UpdateCheckResult | null = null
 let autoUpdateError: string | null = null
 let jobsRepository: JobsRepository | undefined
 let tasksRepository: TaskRepository | undefined
@@ -624,7 +629,8 @@ function registerIpc(): void {
   ipcMain.handle('app:update:check', async (): Promise<UpdateCheckResult> => {
     if (!repository) throw new Error('Settings storage is unavailable.')
     const settings = repository.getSettings()
-    return checkForUpdate({ currentVersion: app.getVersion(), repository: settings.updateRepository })
+    lastUpdateCheck = await checkForUpdate({ currentVersion: app.getVersion(), repository: settings.updateRepository })
+    return lastUpdateCheck
   })
 
   ipcMain.handle('app:update:open', (_event, value: unknown): Promise<void> =>
@@ -632,13 +638,16 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('app:update:download', async (): Promise<UpdateProgress> => {
+    // Small app-only update first (a few MB); the full installer only when the runtime changed.
+    if (appUpdate && lastUpdateCheck && (await appUpdate.check(lastUpdateCheck))) return appUpdate.download(lastUpdateCheck)
     if (!autoUpdate) throw new Error(`The updater is not available: ${autoUpdateError ?? 'not initialised'}`)
-    return autoUpdate.download()
+    return autoUpdate.download(lastUpdateCheck ?? undefined)
   })
 
-  ipcMain.handle('app:update:install', (): boolean => autoUpdate?.install() ?? false)
+  ipcMain.handle('app:update:install', (): boolean => (appUpdate?.ready ? appUpdate.install() : autoUpdate?.install() ?? false))
 
   ipcMain.handle('app:update:progress', (): UpdateProgress => {
+    if (appUpdate && appUpdate.state().phase !== 'idle') return appUpdate.state()
     if (!autoUpdate) throw new Error(`The updater is not available: ${autoUpdateError ?? 'not initialised'}`)
     return autoUpdate.state()
   })
@@ -1183,6 +1192,13 @@ async function createAutoUpdate(): Promise<AutoUpdateController | null> {
     packaged: app.isPackaged,
     currentVersion: app.getVersion(),
     getRepository: () => repository?.getSettings().updateRepository,
+    // App-only releases carry no latest.yml, so point electron-updater at the newest release that has one.
+    resolveFeed: async () => {
+      const slug = lastUpdateCheck?.repository
+      if (!slug) return null
+      const feed = await findFullInstallerFeed(slug, app.getVersion())
+      return feed ? { provider: 'generic', url: feed.url } : null
+    },
     onProgress: (progress) => broadcast('app:update:progress', progress)
   })
   // electron-updater only reports "differential" through its logger, so listen for that line.
@@ -1207,6 +1223,22 @@ async function createAutoUpdate(): Promise<AutoUpdateController | null> {
 async function start(): Promise<void> {
   repository = new SettingsRepository(join(octaHome, 'octa.db'))
   autoUpdate = await createAutoUpdate()
+  if (app.isPackaged) {
+    const updatesDir = join(octaHome, 'updates')
+    const settled = settlePendingAppUpdate(updatesDir, app.getVersion(), process.resourcesPath)
+    if (settled) console.log('[updater]', settled)
+    appUpdate = new AppUpdateController({
+      packaged: true,
+      currentVersion: app.getVersion(),
+      runtimeId: computeRuntimeId({ electronVersion: process.versions.electron, unpackedRoot: join(process.resourcesPath, 'app.asar.unpacked') }),
+      updatesDir,
+      exePath: app.getPath('exe'),
+      resourcesPath: process.resourcesPath,
+      pid: process.pid,
+      onProgress: (progress) => broadcast('app:update:progress', progress),
+      quit: () => app.quit()
+    })
+  }
   jobsRepository = new JobsRepository(join(octaHome, 'octa.db'))
   const databasePath = join(octaHome, 'octa.db')
   tasksRepository = new TaskRepository(databasePath)

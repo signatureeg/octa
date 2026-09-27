@@ -34,9 +34,20 @@ Installed copies check that repository on start; when a newer version exists, th
 of the installer that changed, then installs silently on restart. Keep the old releases' assets
 online, otherwise the updater falls back to a full download.
 
+Two kinds of release:
+
+- **App-only** (default, a few MB): `npm run release:app`. Uploads `octa-app-<version>.asar` and
+  `app-update.json`. Installed copies download just that file and swap it on restart.
+- **Full** (~220 MB): `npm run release:full`. Needed when Electron or anything in node_modules changed
+  (the script warns when the runtime id differs from the previous release). Uploads the NSIS installer,
+  its blockmap, latest.yml and the app-only files.
+
+Both scripts bump nothing: run `npm version patch` first, push main and the tag, then release.
+
 ```powershell
-npm version minor      # or patch / major → bumps package.json and creates the tag
+npm version patch
 git push origin main --follow-tags
+npm run release:app        # or release:full
 ```
 
 ## License

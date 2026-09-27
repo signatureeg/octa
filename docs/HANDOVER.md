@@ -133,6 +133,13 @@ npm version patch             # bump + tag; pushing the tag publishes a GitHub r
 
 ### 4b. Releases and differential updates
 
+**App-only releases (default).** `npm run release:app` after `npm version patch` publishes only
+`octa-app-<version>.asar` (the compiled app, ~3 MB) and `app-update.json`. Installed copies download
+that file, verify its SHA-512, and swap `resources/app.asar` on "Restart and update". Use
+`npm run release:full` only when Electron or node_modules changed; the build script warns when the
+runtime id differs from the previous release.
+
+
 The Release workflow (`.github/workflows/release.yml`) runs on every `v*` tag and attaches the
 installer, its `.blockmap` and `latest.yml` to the GitHub release. Installed copies check the
 repository configured in Settings; the update banner downloads **only the changed blocks** of the

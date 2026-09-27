@@ -19,6 +19,7 @@ export const ar = {
   updateChecking: 'بيجهّز التنزيل…',
   updateDownloading: 'بينزّل {percent}% ({transferred} من {total})',
   updateDownloadingDelta: 'بينزّل التغييرات بس: {percent}% ({transferred} من {total})',
+  updateDownloadingApp: 'بينزّل تحديث البرنامج ({total}): {percent}%',
   updateDownloaded: 'أوكتا {version} جاهز. أعد التشغيل عشان يكمّل التحديث.',
   updateInstall: 'أعد التشغيل وحدّث',
   updateFailed: 'التنزيل فشل: {error}',

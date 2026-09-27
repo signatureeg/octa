@@ -12,11 +12,9 @@ import { normalizeRepository, DEFAULT_UPDATE_REPOSITORY } from './update'
  * falls back to a full download and `differential` is reported as false.
  */
 
-export interface UpdateFeed {
-  provider: 'github'
-  owner: string
-  repo: string
-}
+export type UpdateFeed =
+  | { provider: 'github'; owner: string; repo: string }
+  | { provider: 'generic'; url: string }
 
 /** Minimal surface of electron-updater's autoUpdater used here, so tests can inject a fake. */
 export interface UpdaterLike {
@@ -37,6 +35,8 @@ export interface AutoUpdateOptions {
   packaged: boolean
   currentVersion: string
   getRepository: () => string | undefined
+  /** Optional: a specific release's download base when the latest release has no installer (app-only). */
+  resolveFeed?: () => Promise<UpdateFeed | null>
   onProgress: (progress: UpdateProgress) => void
   now?: () => number
 }
@@ -71,7 +71,7 @@ export class AutoUpdateController {
   private differential = false
 
   constructor(private readonly options: AutoUpdateOptions) {
-    this.progress = idleProgress(options.currentVersion)
+    this.progress = { ...idleProgress(options.currentVersion), mode: 'full' }
     const updater = options.updater
     updater.autoDownload = false
     updater.autoInstallOnAppQuit = true
@@ -106,16 +106,16 @@ export class AutoUpdateController {
   }
 
   private set(patch: Partial<UpdateProgress>): void {
-    this.progress = { ...this.progress, ...patch, currentVersion: this.options.currentVersion, updatedAt: (this.options.now ?? Date.now)() }
+    this.progress = { ...this.progress, ...patch, mode: 'full', currentVersion: this.options.currentVersion, updatedAt: (this.options.now ?? Date.now)() }
     this.options.onProgress(this.progress)
   }
 
-  private applyFeed(): void {
-    const feed = feedForRepository(this.options.getRepository())
-    const slug = `${feed.owner}/${feed.repo}`
-    if (slug === this.feedRepository) return
+  private async applyFeed(): Promise<void> {
+    const feed = (await this.options.resolveFeed?.()) ?? feedForRepository(this.options.getRepository())
+    const key = feed.provider === 'github' ? `${feed.owner}/${feed.repo}` : feed.url
+    if (key === this.feedRepository) return
     this.options.updater.setFeedURL(feed)
-    this.feedRepository = slug
+    this.feedRepository = key
   }
 
   /** Start (or restart) a differential download of the latest release. Resolves once the download has been requested. */
@@ -125,7 +125,7 @@ export class AutoUpdateController {
       return this.progress
     }
     if (this.progress.phase === 'downloading' || this.progress.phase === 'downloaded') return this.progress
-    this.applyFeed()
+    await this.applyFeed()
     this.differential = false
     this.set({ phase: 'checking', version: latest?.latestVersion, percent: 0, transferred: 0, total: 0, error: undefined })
     try {

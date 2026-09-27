@@ -19,11 +19,10 @@ extraResources:
       - "!**/out/**"
       - "!**/node_modules/**"
       - "!**/*.psd"
+# Everything under node_modules stays outside the asar: app.asar is then only the compiled app (~3 MB),
+# which is what app-only updates replace. Native modules and deps change only with full releases.
 asarUnpack:
-  - node_modules/better-sqlite3/**/*
-  - node_modules/uiohook-napi/**/*
-  - node_modules/onnxruntime-node/**/*
-  - node_modules/ffmpeg-static/**/*
+  - node_modules/**/*
 npmRebuild: false
 win:
   icon: installer/icon.ico

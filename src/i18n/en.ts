@@ -19,6 +19,7 @@ export const en = {
   updateChecking: 'Preparing the download…',
   updateDownloading: 'Downloading {percent}% ({transferred} of {total})',
   updateDownloadingDelta: 'Downloading only the changes: {percent}% ({transferred} of {total})',
+  updateDownloadingApp: 'Downloading the app update ({total}): {percent}%',
   updateDownloaded: 'Octa {version} is ready. Restart to finish the update.',
   updateInstall: 'Restart and update',
   updateFailed: 'The download failed: {error}',

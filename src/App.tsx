@@ -71,7 +71,7 @@ function UpdateBanner({
     detail = t('updateChecking', locale)
     action = null
   } else if (phase === 'downloading' && progress) {
-    detail = fill(t(progress.differential ? 'updateDownloadingDelta' : 'updateDownloading', locale), {
+    detail = fill(t(progress.mode === 'app' ? 'updateDownloadingApp' : progress.differential ? 'updateDownloadingDelta' : 'updateDownloading', locale), {
       percent: numbers.format(progress.percent),
       transferred: formatBytes(progress.transferred, locale),
       total: formatBytes(progress.total, locale)

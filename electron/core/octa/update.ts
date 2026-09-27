@@ -144,15 +144,48 @@ function releaseAssets(value: unknown): UpdateReleaseAsset[] {
   return value.filter((asset): asset is UpdateReleaseAsset => Boolean(asset && typeof asset === 'object'))
 }
 
-function releaseLink(payload: UpdateReleasePayload, repository: string, tag: string): { releaseUrl: string; downloadUrl: string } {
+function releaseLink(payload: UpdateReleasePayload, repository: string, tag: string): { releaseUrl: string; downloadUrl: string; appUpdateUrl?: string } {
   const releaseUrl = githubUrl(payload.html_url, repository) ??
     `https://github.com/${repository}/releases/tag/${encodeURIComponent(tag)}`
   const installer = releaseAssets(payload.assets).find((asset) =>
     typeof asset.name === 'string' && /\.exe$/i.test(asset.name) && githubUrl(asset.browser_download_url, repository)
   )
+  const appManifest = releaseAssets(payload.assets).find((asset) => asset.name === 'app-update.json')
+  const appUpdateUrl = githubUrl(appManifest?.browser_download_url, repository) ?? undefined
   return {
     releaseUrl,
-    downloadUrl: githubUrl(installer?.browser_download_url, repository) ?? releaseUrl
+    downloadUrl: githubUrl(installer?.browser_download_url, repository) ?? releaseUrl,
+    ...(appUpdateUrl ? { appUpdateUrl } : {})
+  }
+}
+
+/**
+ * The download base of the newest release that still carries a full installer (latest.yml). App-only
+ * releases do not, so electron-updater must be pointed at this URL as a generic feed instead of
+ * GitHub's "latest" release.
+ */
+export async function findFullInstallerFeed(
+  repository: string,
+  currentVersion: string,
+  fetcher: UpdateFetcher = async (url, init) => fetch(url, init)
+): Promise<{ tag: string; url: string } | null> {
+  const endpoint = `https://api.github.com/repos/${repository}/releases?per_page=20`
+  try {
+    const response = await fetcher(endpoint, { headers: { ...GITHUB_API_HEADERS, 'User-Agent': `Octa-Assistant/${currentVersion}` } })
+    if (!response.ok) return null
+    const releases = await response.json() as unknown
+    if (!Array.isArray(releases)) return null
+    for (const release of releases as UpdateReleasePayload[]) {
+      if (!release || release.draft === true || release.prerelease === true) continue
+      const tag = typeof release.tag_name === 'string' ? release.tag_name.trim() : ''
+      if (!tag || !parseVersion(tag)) continue
+      const hasFeed = releaseAssets(release.assets).some((asset) => asset.name === 'latest.yml')
+      const hasInstaller = releaseAssets(release.assets).some((asset) => typeof asset.name === 'string' && /\.exe$/i.test(asset.name))
+      if (hasFeed && hasInstaller) return { tag, url: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}` }
+    }
+    return null
+  } catch {
+    return null
   }
 }
 

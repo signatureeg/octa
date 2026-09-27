@@ -355,6 +355,8 @@ export interface AppUpdate {
   latestVersion?: string
   releaseUrl?: string
   downloadUrl?: string
+  /** browser_download_url of the release's app-update.json when the release carries an app-only update. */
+  appUpdateUrl?: string
   error?: string
 }
 
@@ -371,6 +373,8 @@ export interface UpdateProgress {
   bytesPerSecond: number
   /** True when only the changed blocks of the installer were downloaded. */
   differential: boolean
+  /** 'app' = small app-only asar swap; 'full' = installer via electron-updater. */
+  mode?: 'app' | 'full'
   error?: string
   updatedAt?: number
 }

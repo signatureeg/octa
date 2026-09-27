@@ -1,6 +1,6 @@
 {
   "name": "octa",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Octa Assistant desktop control center.",
   "main": "./out/main/main.js",
   "author": "Octa contributors",
@@ -19,7 +19,10 @@
     "package:dir": "npm run build && npm run rebuild:electron && electron-builder --win dir --x64",
     "postpackage:dir": "npm rebuild better-sqlite3",
     "test:exe": "node scripts/test-executable.mjs",
-    "dist": "npm run package:dir && npm run test:exe"
+    "dist": "npm run package:dir && npm run test:exe",
+    "build:app-update": "node scripts/build-app-update.mjs",
+    "release:app": "node scripts/release.mjs app",
+    "release:full": "node scripts/release.mjs full"
   },
   "dependencies": {
     "@fontsource/outfit": "^5.3.0",
