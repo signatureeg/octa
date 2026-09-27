@@ -22,7 +22,8 @@ describe('wake word session state machine', () => {
       modelPath: 'C:\\Octa\\models\\octa.onnx',
       threshold: 0.5,
       engine: { frameLength: 4, process },
-      cooldownMs: 500
+      cooldownMs: 500,
+      minConsecutiveFrames: 1
     })
     const hits: number[] = []
     detector.start((hit) => hits.push(hit.keywordIndex))
@@ -31,6 +32,20 @@ describe('wake word session state machine', () => {
     await vi.waitFor(() => expect(process).toHaveBeenCalledTimes(2))
     expect(hits).toEqual([])
     detector.feedPcm(new Int16Array([7, 0, 0, 0]).buffer)
+    await vi.waitFor(() => expect(hits).toEqual([0]))
+    detector.dispose()
+  })
+
+  it('wakes only after the score stays above the threshold for three frames in a row by default', async () => {
+    const scores = [0.9, 0.9, 0.1, 0.9, 0.9, 0.9, 0.9]
+    const process = vi.fn(() => scores.shift() ?? 0)
+    const detector = new OpenWakeWordDetector({ modelPath: 'C:\Octa\models\octa.onnx', threshold: 0.5, engine: { frameLength: 2, process } })
+    const hits: number[] = []
+    await detector.start((hit) => hits.push(hit.keywordIndex))
+    detector.feedPcm(new Int16Array(2 * 5).buffer)
+    await vi.waitFor(() => expect(process).toHaveBeenCalledTimes(5))
+    expect(hits).toEqual([])
+    detector.feedPcm(new Int16Array(2 * 2).buffer)
     await vi.waitFor(() => expect(hits).toEqual([0]))
     detector.dispose()
   })
@@ -72,7 +87,8 @@ describe('wake word session state machine', () => {
     const detector = new OpenWakeWordDetector({
       modelPath: 'C:\\Octa\\models\\octa.onnx',
       threshold: 0.5,
-      runtime
+      runtime,
+      minConsecutiveFrames: 1
     })
     const hits: number[] = []
     await detector.start((hit) => hits.push(hit.keywordIndex))

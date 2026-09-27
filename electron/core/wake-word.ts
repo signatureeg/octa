@@ -210,6 +210,11 @@ export interface OpenWakeWordDetectorOptions {
   engine?: OpenWakeWordEngine
   runtime?: OpenWakeWordRuntime
   cooldownMs?: number
+  /**
+   * Frames in a row (80 ms each) that must reach the threshold before waking. A spoken "يا أوكتا"
+   * stays above it for 4-6 frames; most look-alike words ("أكتر", "أو كده") spike for one or two.
+   */
+  minConsecutiveFrames?: number
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -232,12 +237,15 @@ export class OpenWakeWordDetector implements WakeWordDetector {
   private lastHit = 0
   private readonly threshold: number
   private readonly cooldownMs: number
+  private readonly minConsecutiveFrames: number
+  private run = 0
   private processing = Promise.resolve()
 
   constructor(private readonly options: OpenWakeWordDetectorOptions) {
     this.engine = options.engine
     this.threshold = thresholdFor(options)
     this.cooldownMs = Math.max(500, Math.trunc(options.cooldownMs ?? 1_500))
+    this.minConsecutiveFrames = Math.max(1, Math.trunc(options.minConsecutiveFrames ?? 3))
   }
 
   get frameLength(): number {
@@ -256,6 +264,7 @@ export class OpenWakeWordDetector implements WakeWordDetector {
     }
     this.engine.reset?.()
     this.pending = new Int16Array(0)
+    this.run = 0
     this.onWake = onWake
     this.active = true
   }
@@ -284,6 +293,7 @@ export class OpenWakeWordDetector implements WakeWordDetector {
     this.active = false
     this.onWake = undefined
     this.pending = new Int16Array(0)
+    this.run = 0
     this.engine?.reset?.()
   }
 
@@ -294,7 +304,13 @@ export class OpenWakeWordDetector implements WakeWordDetector {
   }
 
   private acceptScore(score: number): void {
-    if (!this.active || !Number.isFinite(score) || score < this.threshold) return
+    if (!this.active) return
+    if (!Number.isFinite(score) || score < this.threshold) {
+      this.run = 0
+      return
+    }
+    this.run += 1
+    if (this.run < this.minConsecutiveFrames) return
     const timestamp = Date.now()
     if (timestamp - this.lastHit < this.cooldownMs) return
     this.lastHit = timestamp
