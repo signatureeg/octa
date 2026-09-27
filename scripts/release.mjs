@@ -45,7 +45,7 @@ const notes = existsSync(notesFile)
 const tmpNotes = join(release, 'notes.md')
 writeFileSync(tmpNotes, notes)
 
-const gh = spawnSync('gh', ['release', 'create', tag, ...files, '--title', `Octa ${pkg.version}`, '--notes-file', tmpNotes, '--latest'], { cwd: root, stdio: 'inherit', shell: true })
+const gh = spawnSync(process.platform === 'win32' ? 'gh.exe' : 'gh', ['release', 'create', tag, ...files, '--title', `Octa ${pkg.version}`, '--notes-file', tmpNotes, '--latest'], { cwd: root, stdio: 'inherit' })
 if (gh.status !== 0) process.exit(gh.status ?? 1)
 const manifest = JSON.parse(readFileSync(join(release, 'app-update.json'), 'utf8'))
 writeFileSync(join(release, 'previous-runtime-id.txt'), manifest.runtimeId)
