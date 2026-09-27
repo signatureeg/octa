@@ -143,7 +143,7 @@ describe('OctaPage states', () => {
     expect(html).toContain('No saved plans yet. Octa will keep the next one here.')
     expect(html).toContain('Bring the next thing into focus')
     expect(html).toContain('Nothing is queued yet')
-    expect(html).toContain('VoiceBar will appear here')
+    expect(html).toContain('Voice controls appear here')
     expect(html).toContain('Steps will appear after Octa has a plan.')
     expect(listJobs).not.toHaveBeenCalled()
   })

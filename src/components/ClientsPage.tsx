@@ -247,7 +247,7 @@ export function ClientsPage({ onBack, locale }: { onBack: () => void; locale: Lo
             <h3>
               <Users size={15} aria-hidden="true" /> {label('clientsListTitle', locale)}
             </h3>
-            <span>{clients.length}</span>
+            <span className="count-chip">{clients.length}</span>
           </div>
           <div className="clients-scroll">
             {clients.map((entry) => (

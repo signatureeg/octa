@@ -314,14 +314,14 @@ export function WorkflowsPage({ locale }: { locale: Locale }): React.JSX.Element
                         <span className="workflow-step-index">{step.id}</span>
                         <span className={`workflow-status status-${status}`}>{label(statusKey(status))}</span>
                       </div>
-                      <h3>{step.name ?? step.id}</h3>
+                      <h3>{step.name ?? step.skill ?? step.runner}</h3>
                       <p><span>{label('workflowRunner')}</span> {step.runner}{step.skill ? ` · ${step.skill}` : ''}</p>
                       <p><span>{label('workflowNeeds')}</span> {step.needs.join(', ') || label('notAvailable')}</p>
                       <p><span>{label('workflowGate')}</span> {gateLabel(step.gate, locale)}</p>
                       {step.todo && <small className="workflow-todo">{label('workflowTodo')}</small>}
                       {step.acceptance.length > 0 && (
                         <ul>
-                          {step.acceptance.map((criterion) => <li key={criterion}>{criterion}</li>)}
+                          {step.acceptance.map((criterion) => <li dir="auto" key={criterion}>{criterion}</li>)}
                         </ul>
                       )}
                     </article>

@@ -19,9 +19,8 @@ export function SourcesTable({ sources, locale, maxRows = 200 }: SourcesTablePro
       <header className="sources-heading">
         <div>
           <span className="job-card-eyebrow">{label('sourcesLedger', locale)}</span>
-          <h2>{sources.length}</h2>
+          <h2>{sources.length} <span className="sources-count">{label('sourcesRead', locale)}</span></h2>
         </div>
-        <span className="sources-count">{label('sourcesRead', locale)}</span>
       </header>
       {visible.length === 0 ? (
         <p className="empty-state">{label('noSources', locale)}</p>

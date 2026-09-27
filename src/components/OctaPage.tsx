@@ -572,7 +572,7 @@ function FailureSummary({ locale, jobs }: { locale: Locale; jobs: readonly JobRe
           const detail = job.error ?? (nonEmptyString(notes) ? notes : label('failureNoDetail', locale))
           return (
             <li key={job.id}>
-              <strong>{job.skill ?? job.stepId ?? job.runner}</strong>
+              <strong>{job.skill ?? job.stepId ?? job.runner} <small>{formatTime(job.finishedAt ?? job.startedAt ?? undefined, locale)}</small></strong>
               <span>{detail}</span>
             </li>
           )
@@ -641,7 +641,7 @@ function StepList({
         </ol>
       )}
       <div className="octa-live-log" aria-label={label('liveActivity', locale)}>
-        <div className="octa-subheading"><span>{label('liveActivity', locale)}</span><span className="octa-live-chip"><span className="octa-live-dot" />{label('liveActivityStatus', locale)}</span></div>
+        <div className="octa-subheading"><span>{label('liveActivity', locale)}</span>{recentEvents.length > 0 && <span className="octa-live-chip"><span className="octa-live-dot" />{label('liveActivityStatus', locale)}</span>}</div>
         {recentEvents.length === 0 ? <p>{label('liveActivityEmpty', locale)}</p> : (
           <ul>
             {recentEvents.map((event, index) => (
