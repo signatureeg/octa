@@ -74,7 +74,7 @@ describe('app-only update', () => {
     expect(result.mode).toBe('app')
     expect(result.total).toBe(asarBytes.length)
     expect(seen.some((p) => p.phase === 'downloading' && p.percent > 0 && p.percent < 100)).toBe(true)
-    expect(readFileSync(join(updatesDir, 'octa-app-0.3.0.asar')).equals(asarBytes)).toBe(true)
+    expect(readFileSync(join(updatesDir, 'octa-app-0.3.0.pkg')).equals(asarBytes)).toBe(true)
 
     expect(controller.install()).toBe(true)
     expect(quit).toBe(1)
@@ -82,7 +82,7 @@ describe('app-only update', () => {
     const script = readFileSync(launched[0], 'utf8')
     expect(script).toContain('PID eq 4242')
     expect(script).toContain('copy /y "%RES%\\app.asar" "%RES%\\app.asar.bak"')
-    expect(script).toContain(`move /y "${join(updatesDir, 'octa-app-0.3.0.asar')}" "%RES%\\app.asar"`)
+    expect(script).toContain(`move /y "${join(updatesDir, 'octa-app-0.3.0.pkg')}" "%RES%\\app.asar"`)
     expect(script).toContain('start "" "C:\\Users\\me\\AppData\\Local\\Programs\\Octa\\Octa.exe"')
     expect(JSON.parse(readFileSync(join(updatesDir, 'pending.json'), 'utf8'))).toMatchObject({ version: '0.3.0', from: '0.2.4' })
   })
@@ -93,7 +93,7 @@ describe('app-only update', () => {
     const result = await bad.download(update)
     expect(result.phase).toBe('error')
     expect(result.error).toMatch(/checksum/)
-    expect(existsSync(join(updatesDir, 'octa-app-0.3.0.asar'))).toBe(false)
+    expect(existsSync(join(updatesDir, 'octa-app-0.3.0.pkg'))).toBe(false)
 
     const other = new AppUpdateController({ packaged: true, currentVersion: '0.2.4', runtimeId: 'rt-9', updatesDir, exePath: 'x', resourcesPath: 'y', pid: 1, onProgress: () => {}, fetcher: fetcherFor(baseManifest) })
     expect(await other.check(update)).toBeNull()

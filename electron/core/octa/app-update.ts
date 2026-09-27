@@ -145,7 +145,8 @@ export class AppUpdateController {
     }
     const base = update.appUpdateUrl!.replace(/[^/]+$/, '')
     const url = base + manifest.file
-    const target = join(this.options.updatesDir, `octa-app-${manifest.version}.asar`)
+    // Electron's fs shim treats any path ending in ".asar" as an archive and refuses to write it, so download as .pkg.
+    const target = join(this.options.updatesDir, `octa-app-${manifest.version}.pkg`)
     mkdirSync(this.options.updatesDir, { recursive: true })
     this.set({ phase: 'downloading', version: manifest.version, percent: 0, transferred: 0, total: manifest.size, bytesPerSecond: 0, differential: true, error: undefined })
     try {
@@ -155,6 +156,7 @@ export class AppUpdateController {
       const total = Number(response.headers.get('content-length') ?? manifest.size) || manifest.size
       const hash = createHash('sha512')
       const file = createWriteStream(target)
+      file.on('error', () => { /* surfaced through the write callback below */ })
       const reader = response.body.getReader()
       const started = (this.options.now ?? Date.now)()
       let transferred = 0
