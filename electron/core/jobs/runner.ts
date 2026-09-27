@@ -472,12 +472,15 @@ export function buildClaudeSkillArgv(context: JobRunnerArgvContext, autonomy: Jo
   ]
 }
 
+/** The Codex model Octa's executor (Luna) runs; health pings the same one. */
+export const CODEX_EXECUTOR_MODEL = 'gpt-5.6-luna'
+
 export function buildCodexExecArgv(context: JobRunnerArgvContext): string[] {
   const args = [
     'exec',
     '--json',
     '-m',
-    'gpt-5.6-luna',
+    CODEX_EXECUTOR_MODEL,
     '-c',
     'model_reasoning_effort="max"',
     '-c',

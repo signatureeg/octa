@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   HEALTH_CHECK_IDS,
   checkClaude,
+  checkCodex,
   checkGemini,
   checkPhotoshop,
   checkPython,
@@ -14,6 +15,7 @@ import {
   type HealthFileSystem
 } from '../electron/core/octa/health'
 import { DEFAULT_SETTINGS, type AppSettings } from '../electron/types'
+import { CODEX_EXECUTOR_MODEL } from '../electron/core/jobs/runner'
 
 function result(stdout = '', code = 0, stderr = ''): HealthCommandResult {
   return { code, signal: null, stdout, stderr, timedOut: false }
@@ -102,8 +104,8 @@ describe('Octa environment health checks', () => {
     expect(report.ok).toBe(true)
     expect(report.checks.map((check) => check.id)).toEqual([...HEALTH_CHECK_IDS])
     expect(report.checks.every((check) => check.ok && check.detail)).toBe(true)
-    expect(command).toHaveBeenCalledWith('claude', ['-p', '--no-session-persistence', '--output-format', 'text'], expect.objectContaining({ timeoutMs: 20_000 }))
-    expect(command).toHaveBeenCalledWith('codex', ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only'], expect.objectContaining({ timeoutMs: 20_000 }))
+    expect(command).toHaveBeenCalledWith('claude', ['-p', '--no-session-persistence', '--output-format', 'text'], expect.objectContaining({ timeoutMs: 45_000 }))
+    expect(command).toHaveBeenCalledWith('codex', ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '-m', CODEX_EXECUTOR_MODEL], expect.objectContaining({ timeoutMs: 45_000 }))
   })
 
   it('keeps optional Photoshop and Brave checks green when they are not configured', async () => {
@@ -122,6 +124,25 @@ describe('Octa environment health checks', () => {
     expect(report.checks.find((check) => check.id === 'photoshop')).toMatchObject({ ok: true })
   })
 
+  it('pings Codex with the model Octa runs and reports the API error, not the first JSON event', async () => {
+    const apiError = JSON.stringify({ type: 'error', status: 400, error: { type: 'invalid_request_error', message: "The 'x' model is not supported when using Codex with a ChatGPT account." } })
+    const events = [
+      JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+      JSON.stringify({ type: 'turn.started' }),
+      JSON.stringify({ type: 'error', message: apiError }),
+      JSON.stringify({ type: 'turn.failed', error: { message: apiError } })
+    ].join('\n')
+    const command = vi.fn(async (_executable: string, args: readonly string[]) => {
+      if (args[0] === '--version') return result('codex-cli 0.200.0')
+      return result(events, 1)
+    })
+    const check = await checkCodex({ command, resolveExecutable: (name) => name })
+    expect(check.ok).toBe(false)
+    expect(check.detail).toBe("Codex ping failed: The 'x' model is not supported when using Codex with a ChatGPT account.")
+    const pingArgs = command.mock.calls[1]?.[1] ?? []
+    expect(pingArgs.slice(-2)).toEqual(['-m', CODEX_EXECUTOR_MODEL])
+  })
+
   it('fails with a fix hint when Claude is installed but its ping times out', async () => {
     const command = vi.fn(async (_executable: string, args: readonly string[]) => {
       if (args[0] === '--version') return result('2.1.257 (Claude Code)')
@@ -129,7 +150,7 @@ describe('Octa environment health checks', () => {
     })
     const check = await checkClaude({ command, resolveExecutable: (name) => name })
     expect(check.ok).toBe(false)
-    expect(check.detail).toContain('ping timed out after 20 seconds')
+    expect(check.detail).toContain('ping timed out after 45 seconds')
     expect(check.fix).toContain('Claude Code')
   })
 

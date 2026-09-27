@@ -16,12 +16,12 @@ import { detectObsidianVault, envPath, resolvePhotoshopPath, unpackedAsarPath } 
 import type { AppSettings } from '../../types'
 import type { ResearchBrowserStatus } from './browser'
 import { GeminiClient } from '../../cloud/gemini'
-import { resolveCliBinary } from '../jobs/runner'
+import { CODEX_EXECUTOR_MODEL, resolveCliBinary } from '../jobs/runner'
 
 export const DEFAULT_HEALTH_OCTA_HOME = 'C:\\Octa'
 export const HEALTH_COMMAND_TIMEOUT_MS = 5_000
 // The authenticated ping is a real model round-trip, which routinely takes longer than a --version call.
-export const HEALTH_PING_TIMEOUT_MS = 20_000
+export const HEALTH_PING_TIMEOUT_MS = 45_000
 
 export const HEALTH_CHECK_IDS = [
   'node',
@@ -211,9 +211,47 @@ function commandFailed(result: HealthCommandResult): boolean {
   return result.timedOut || result.code !== 0
 }
 
+/** Innermost human message of an error that may be JSON (Codex nests API errors as JSON strings). */
+function unwrapMessage(value: unknown): string {
+  if (typeof value === 'string') {
+    try {
+      return unwrapMessage(JSON.parse(value)) || value
+    } catch {
+      return value
+    }
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return unwrapMessage(record.error) || unwrapMessage(record.message)
+  }
+  return ''
+}
+
+/**
+ * The line that explains a failure. Codex `exec --json` prints JSON events and the first one is only
+ * "thread.started", so prefer the last turn.failed / error event; otherwise the last line that reads like an error.
+ */
+function failureLine(result: HealthCommandResult): string {
+  const lines = `${result.stdout}\n${result.stderr}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  for (const line of [...lines].reverse()) {
+    if (!line.startsWith('{')) continue
+    try {
+      const event = JSON.parse(line) as { type?: string; message?: unknown; error?: unknown }
+      if (event.type === 'turn.failed' || event.type === 'error') {
+        const message = unwrapMessage(event.error ?? event.message)
+        if (message) return message.slice(0, 400)
+      }
+    } catch {
+      // not JSON
+    }
+  }
+  const errorText = [...lines].reverse().find((line) => !line.startsWith('{') && /error|fail|denied|expired|not supported|unauthori[sz]ed|invalid/i.test(line))
+  return errorText?.slice(0, 400) ?? outputLine(result)
+}
+
 function commandFailureDetail(label: string, result: HealthCommandResult, timeoutMs = HEALTH_COMMAND_TIMEOUT_MS): string {
   if (result.timedOut) return `${label} timed out after ${timeoutMs / 1_000} seconds.`
-  const output = outputLine(result)
+  const output = failureLine(result)
   return output ? `${label} failed: ${output}` : `${label} failed with exit code ${result.code ?? 'unknown'}.`
 }
 
@@ -417,7 +455,7 @@ export function checkClaude(options: HealthOptions = {}): Promise<HealthCheckRes
 }
 
 export function checkCodex(options: HealthOptions = {}): Promise<HealthCheckResult> {
-  return checkCli('codex', 'Codex', ['--version'], ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only'], options)
+  return checkCli('codex', 'Codex', ['--version'], ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '-m', CODEX_EXECUTOR_MODEL], options)
 }
 
 export async function checkPython(
