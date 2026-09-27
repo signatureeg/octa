@@ -50,6 +50,7 @@ interface OpenWakeWordSession {
   outputNames?: readonly string[]
   run(feeds: Record<string, unknown>): Promise<Record<string, OpenWakeWordTensor>>
   getInputs?(): Array<{ name: string; dims?: readonly (number | string)[] }>
+  release?(): Promise<void> | void
 }
 
 export interface OpenWakeWordRuntime {
@@ -198,6 +199,14 @@ class OpenWakeWordOnnxEngine implements OpenWakeWordEngine {
 
   dispose(): void {
     this.reset()
+    // Free the native ONNX sessions now; leaving them to the finalizer can crash a worker thread on exit.
+    for (const session of [this.melSession, this.embeddingSession, this.classifierSession]) {
+      try {
+        void Promise.resolve(session.release?.()).catch(() => undefined)
+      } catch {
+        // already released
+      }
+    }
   }
 }
 

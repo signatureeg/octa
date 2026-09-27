@@ -22,6 +22,7 @@ async function wakes(name: string): Promise<number> {
   for (let at = 0; at < audio.length; at += 2_048) detector.feedPcm(audio.slice(at, at + 2_048))
   await (detector as unknown as { processing: Promise<void> }).processing
   detector.dispose?.()
+  await new Promise((resolve) => setTimeout(resolve, 50))
   return hits
 }
 
