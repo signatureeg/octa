@@ -47,9 +47,11 @@ export function Overlay(): React.JSX.Element {
             <span dir="auto">{state.transcript || state.error || t('voiceReady', locale)}</span>
           </div>
           <button
-            aria-label={t('voiceInterrupt', locale)}
+            aria-label={t('voiceStop', locale)}
             className="voice-overlay-close"
-            onClick={() => void window.octa.voice.interrupt()}
+            // X closes the pop-up: end the voice session and silence any reply. The wake word keeps listening.
+            onClick={() => void window.octa.voice.stop()}
+            title={t('voiceStop', locale)}
             type="button"
           >
             <X size={14} />

@@ -16,7 +16,8 @@ import { detectObsidianVault, envPath, resolvePhotoshopPath, unpackedAsarPath } 
 import type { AppSettings } from '../../types'
 import type { ResearchBrowserStatus } from './browser'
 import { GeminiClient } from '../../cloud/gemini'
-import { CODEX_EXECUTOR_MODEL, resolveCliBinary } from '../jobs/runner'
+import { resolveCliBinary } from '../jobs/runner'
+import { phaseModel } from './models'
 
 export const DEFAULT_HEALTH_OCTA_HOME = 'C:\\Octa'
 export const HEALTH_COMMAND_TIMEOUT_MS = 5_000
@@ -455,7 +456,7 @@ export function checkClaude(options: HealthOptions = {}): Promise<HealthCheckRes
 }
 
 export function checkCodex(options: HealthOptions = {}): Promise<HealthCheckResult> {
-  return checkCli('codex', 'Codex', ['--version'], ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '-m', CODEX_EXECUTOR_MODEL], options)
+  return checkCli('codex', 'Codex', ['--version'], ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '-m', phaseModel('code').model], options)
 }
 
 export async function checkPython(

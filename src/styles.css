@@ -949,21 +949,33 @@ button:active:not(:disabled), [role="button"]:active:not([aria-disabled="true"])
 .voice-toggle-row { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 14px; color: var(--secondary-foreground); font-size: 12px; }
 .voice-toggle-row label { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
 .voice-toggle-row input { accent-color: var(--primary); }
+/* The floating voice pop-up sits on top of any app, so it is always a solid light card with dark text,
+   whatever the Octa theme is (a translucent tinted card was unreadable on both light and dark desktops). */
 .voice-overlay {
+  --overlay-bg: #fdfcff;
+  --overlay-text: #1f1629;
+  --overlay-muted: #5f566b;
+  --overlay-accent: #6f4bb0;
+  --overlay-line: #e4dcef;
   display: flex;
   align-items: center;
   gap: 10px;
   width: 340px;
   min-height: 62px;
+  margin: 6px auto 0;
   padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--primary) 12%, transparent);
+  border: 1px solid var(--overlay-line);
   border-radius: 16px;
-  color: var(--primary-foreground);
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
-  box-shadow: 0 16px 44px color-mix(in srgb, var(--primary) 12%, transparent);
-  backdrop-filter: blur(16px);
+  color: var(--overlay-text);
+  background: var(--overlay-bg);
+  box-shadow: 0 6px 16px rgba(31, 22, 41, 0.16);
 }
-.voice-overlay-close { width: 26px; height: 26px; padding: 0; flex: 0 0 26px; }
+.voice-overlay .voice-overlay-icon { color: var(--overlay-accent); background: #efe8fa; }
+.voice-overlay .voice-overlay-copy strong { color: var(--overlay-text); font-size: 12.5px; }
+.voice-overlay .voice-overlay-copy span { color: var(--overlay-muted); }
+.voice-overlay .voice-overlay-close { width: 28px; height: 28px; padding: 0; flex: 0 0 28px; border-color: var(--overlay-line); color: var(--overlay-text); background: #f3eff8; }
+.voice-overlay .voice-overlay-close:hover { color: #fff; border-color: #c2413b; background: #c2413b; }
+.voice-overlay.error .voice-overlay-icon { color: #b3261e; background: #fbe9e7; }
 .voice-overlay.thinking .voice-overlay-icon svg { animation: spin 1.1s linear infinite; }
 @keyframes voice-pulse { 0% { transform: scale(.9); opacity: .1; } 65% { transform: scale(1.16); opacity: .65; } 100% { transform: scale(1.22); opacity: 0; } }
 
@@ -2639,3 +2651,7 @@ button.update-banner-link { cursor: pointer; font-family: inherit; }
 .setting-control:has(.setting-browse) { display: flex; gap: 6px; align-items: center; }
 .setting-control:has(.setting-browse) input { flex: 1 1 auto; min-width: 0; }
 input[dir="ltr"] { text-align: left; }
+
+/* Settings → Models per phase: model id + reasoning level side by side. */
+.phase-model-control { display: grid; grid-template-columns: minmax(0, 1fr) 118px; gap: 6px; }
+.phase-model-control input { font-family: "Cascadia Mono", Consolas, monospace; }

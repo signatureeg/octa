@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification, screen, shell } from 'electron'
+import { normalizePhaseModels, setPhaseModels } from './core/octa/models'
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -202,7 +203,10 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      // Voice keeps running while the window is hidden in the tray. Chromium throttles hidden
+      // renderers by default, which starved the mic capture and the reply audio (gaps = buzzing).
+      backgroundThrottling: false
     }
   })
 
@@ -302,6 +306,7 @@ function normalizeSettingsUpdate(update: Partial<AppSettings>): Partial<AppSetti
   const next = normalizePathSettings(update)
   if (update.pushToTalkKey !== undefined && update.hotkey === undefined) next.hotkey = update.pushToTalkKey
   if (update.hotkey !== undefined && update.pushToTalkKey === undefined) next.pushToTalkKey = update.hotkey
+  if (update.phaseModels !== undefined) next.phaseModels = normalizePhaseModels(update.phaseModels)
   return next
 }
 
@@ -686,6 +691,7 @@ function registerIpc(): void {
     const before = repository.getSettings()
     const normalized = normalizeSettingsUpdate(update)
     let next = repository.setSettings(normalized)
+    setPhaseModels(next.phaseModels)
     if (
       before.geminiApiKey !== next.geminiApiKey &&
       next.geminiApiKey.trim() &&
@@ -737,6 +743,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('voice:stop', (): VoiceState => {
     voiceController?.stopSession()
+    broadcast('voice:audio-stop', undefined)
     return voiceController?.currentState ?? defaultVoiceState()
   })
   ipcMain.handle('voice:interrupt', async (): Promise<VoiceState> => {
@@ -1329,6 +1336,7 @@ async function start(): Promise<void> {
   conversations = new ConversationRepository(repository.getDatabase())
   workflowGates = new WorkflowGateRegistry()
   const initialSettings = repository.getSettings()
+  setPhaseModels(initialSettings.phaseModels)
   if (initialSettings.geminiApiKey.trim()) {
     await resolveGeminiLiveModel({
       apiKey: initialSettings.geminiApiKey,

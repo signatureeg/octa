@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { normalizePhaseModels } from '../core/octa/models'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DATABASE_BUSY_TIMEOUT_MS } from './busy-timeout'
@@ -31,7 +32,8 @@ const SETTING_KEYS: readonly (keyof AppSettings)[] = [
   'hotkey',
   'triggerType',
   'mouseButton',
-  'wakeGreeting'
+  'wakeGreeting',
+  'phaseModels'
 ]
 
 const SETTING_KEY_SET = new Set<string>(SETTING_KEYS)
@@ -144,7 +146,8 @@ export class SettingsRepository {
       hotkey,
       triggerType: stored.triggerType === 'mouse' ? 'mouse' : 'keyboard',
       mouseButton: stored.mouseButton === 3 || stored.mouseButton === 5 ? stored.mouseButton : 4,
-      wakeGreeting: stringSetting(stored.wakeGreeting, 512, DEFAULT_SETTINGS.wakeGreeting)
+      wakeGreeting: stringSetting(stored.wakeGreeting, 512, DEFAULT_SETTINGS.wakeGreeting),
+      phaseModels: normalizePhaseModels(stored.phaseModels)
     }
   }
 

@@ -3,6 +3,7 @@ import {
   BellRing,
   Check,
   Cloud,
+  Cpu,
   FolderOpen,
   Github,
   Globe2,
@@ -22,6 +23,7 @@ import {
   Wrench
 } from 'lucide-react'
 import type { AiTestResult, AppSettings } from '../../electron/types'
+import { DEFAULT_PHASE_MODELS, MODEL_PHASES, PHASE_INFO, type ModelPhase } from '../../electron/core/octa/models'
 import type { BrowserChallengeEvent, ResearchBrowserStatus, ResearchLoginSite } from '../../electron/core/octa/browser'
 import type { Locale, TranslationKey } from '../i18n'
 import { t } from '../i18n'
@@ -32,6 +34,24 @@ const LOGIN_SITES: readonly ResearchLoginSite[] = ['facebook', 'x', 'reddit']
 
 function siteLabelKey(site: ResearchLoginSite): TranslationKey {
   return site === 'facebook' ? 'researchFacebook' : site === 'x' ? 'researchX' : 'researchReddit'
+}
+
+const PHASE_LABELS: Record<ModelPhase, TranslationKey> = {
+  plan: 'modelPhasePlan',
+  critic: 'modelPhaseCritic',
+  code: 'modelPhaseCode',
+  review: 'modelPhaseReview',
+  analysis: 'modelPhaseAnalysis',
+  skill: 'modelPhaseSkill'
+}
+
+const PHASE_DETAILS: Record<ModelPhase, TranslationKey> = {
+  plan: 'modelPhasePlanDetail',
+  critic: 'modelPhaseCriticDetail',
+  code: 'modelPhaseCodeDetail',
+  review: 'modelPhaseReviewDetail',
+  analysis: 'modelPhaseAnalysisDetail',
+  skill: 'modelPhaseSkillDetail'
 }
 
 function SettingField({
@@ -357,6 +377,42 @@ export function SettingsPage({
                   : notificationState === 'failed'
                     ? label('notificationFailed')
                     : label('testNotifications')}
+            </button>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <SectionHeading icon={<Cpu size={19} />} title={label('modelsSection')} detail={label('modelsSectionDetail')} />
+          <div className="settings-fields">
+            {MODEL_PHASES.map((phase) => {
+              const current = draft.phaseModels[phase]
+              const info = PHASE_INFO[phase]
+              const update = (patch: Partial<typeof current>): void => setValue('phaseModels', { ...draft.phaseModels, [phase]: { ...current, ...patch } })
+              return (
+                <SettingField key={phase} icon={<Cpu size={18} />} label={label(PHASE_LABELS[phase])} detail={`${label(PHASE_DETAILS[phase])} · ${info.cli === 'claude' ? 'Claude Code' : 'Codex'}`}>
+                  <div className="phase-model-control">
+                    <input
+                      aria-label={label(PHASE_LABELS[phase])}
+                      dir="ltr"
+                      list={`phase-models-${info.cli}`}
+                      onChange={(event) => update({ model: event.target.value })}
+                      placeholder={DEFAULT_PHASE_MODELS[phase].model}
+                      spellCheck={false}
+                      value={current.model}
+                    />
+                    <select aria-label={label('modelEffort')} dir="ltr" onChange={(event) => update({ effort: event.target.value })} value={current.effort}>
+                      {info.efforts.map((effort) => <option key={effort || 'default'} value={effort}>{effort || label('modelEffortDefault')}</option>)}
+                    </select>
+                  </div>
+                </SettingField>
+              )
+            })}
+            <datalist id="phase-models-claude">{PHASE_INFO.plan.suggestions.map((model) => <option key={model} value={model} />)}</datalist>
+            <datalist id="phase-models-codex">{PHASE_INFO.code.suggestions.map((model) => <option key={model} value={model} />)}</datalist>
+          </div>
+          <div className="section-action-row">
+            <button className="quiet-button" onClick={() => setValue('phaseModels', DEFAULT_PHASE_MODELS)} type="button">
+              <RefreshCw size={14} /> {label('modelsReset')}
             </button>
           </div>
         </section>

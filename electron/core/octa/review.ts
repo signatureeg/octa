@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { codexModelArgs } from './models'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { basename, delimiter, dirname, extname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -441,10 +442,7 @@ export function buildReviewArgv(workspace: string, outputSchema = 'review.schema
   return [
     'exec',
     '--json',
-    '-m',
-    'gpt-5.6-sol',
-    '-c',
-    'model_reasoning_effort="high"',
+    ...codexModelArgs('review'),
     '-s',
     'read-only',
     '-C',

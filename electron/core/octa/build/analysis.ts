@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, type Dirent } from 'node:fs'
+import { codexModelArgs } from '../models'
 import { join, relative, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { resolveCliBinary } from '../../jobs/runner'
@@ -113,7 +114,7 @@ async function defaultAnalysisAgent(prompt: string, kind: AnalysisKind): Promise
   if (!executable) return ''
   const root = process.cwd()
   const args = [
-    'exec', '--json', '-m', 'gpt-5.6-luna', '-c', 'model_reasoning_effort="max"',
+    'exec', '--json', ...codexModelArgs('analysis'),
     '-s', 'read-only', '-C', root, '--skip-git-repo-check'
   ]
   const child = spawn(executable, args, { cwd: root, env: process.env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })

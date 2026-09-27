@@ -1,3 +1,4 @@
+import { DEFAULT_PHASE_MODELS, type PhaseModels } from './core/octa/models'
 export type ThemeMode = 'dark' | 'light'
 export type Locale = 'ar' | 'en'
 export type AiProvider = 'gemini' | 'vertex'
@@ -411,6 +412,8 @@ export interface AppSettings {
   triggerType: TriggerType
   mouseButton: MouseTriggerButton
   wakeGreeting: string
+  /** Model and reasoning level for each phase of the build/workflow engine (Settings → Models). */
+  phaseModels: PhaseModels
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -440,7 +443,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hotkey: 'CommandOrControl+Alt+Space',
   triggerType: 'keyboard',
   mouseButton: 4,
-  wakeGreeting: 'إيه يا عميل، عايز إيه؟'
+  wakeGreeting: 'إيه يا عميل، عايز إيه؟',
+  phaseModels: DEFAULT_PHASE_MODELS
 }
 
 export interface RendererState {

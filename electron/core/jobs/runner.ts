@@ -23,6 +23,7 @@ import { DEFAULT_SETTINGS, type AppSettings, type JobAutonomy, type JobEvent, ty
 import { JobsRepository } from '../../db/jobs'
 import { parseSkillFrontmatter, type SkillFrontmatter } from '../skills/frontmatter'
 import { runnerForSkill } from '../skills/policy'
+import { claudeModelArgs, codexModelArgs, DEFAULT_PHASE_MODELS } from '../octa/models'
 import {
   REVIEW_SCHEMA,
   normalizeReviewRunResult,
@@ -439,10 +440,7 @@ function allowedToolsFor(autonomy: JobSpec['autonomy'] = 'assisted'): string[] {
 export function buildClaudePlanArgv(context: JobRunnerArgvContext): string[] {
   return [
     '-p',
-    '--model',
-    'claude-fable-5-1',
-    '--effort',
-    'medium',
+    ...claudeModelArgs('plan'),
     '--output-format',
     'json',
     '--add-dir',
@@ -467,22 +465,18 @@ export function buildClaudeSkillArgv(context: JobRunnerArgvContext, autonomy: Jo
     join(context.skillPath, 'SKILL.md'),
     '--allowedTools',
     ...(context.allowedTools ?? allowedToolsFor(autonomy)),
-    '--model',
-    'claude-sonnet-5'
+    ...claudeModelArgs('skill')
   ]
 }
 
-/** The Codex model Octa's executor (Luna) runs; health pings the same one. */
-export const CODEX_EXECUTOR_MODEL = 'gpt-5.6-luna'
+/** The shipped default for the Codex executor phase (Luna). The live value comes from phaseModel('code'). */
+export const CODEX_EXECUTOR_MODEL = DEFAULT_PHASE_MODELS.code.model
 
 export function buildCodexExecArgv(context: JobRunnerArgvContext): string[] {
   const args = [
     'exec',
     '--json',
-    '-m',
-    CODEX_EXECUTOR_MODEL,
-    '-c',
-    'model_reasoning_effort="max"',
+    ...codexModelArgs('code'),
     '-c',
     'service_tier="priority"',
     '-c',
@@ -502,10 +496,7 @@ export function buildCodexCriticArgv(context: JobRunnerArgvContext): string[] {
   return [
     'exec',
     '--json',
-    '-m',
-    'gpt-6-astra',
-    '-c',
-    'model_reasoning_effort="xhigh"',
+    ...codexModelArgs('critic'),
     '-s',
     'read-only',
     '-C',
@@ -520,10 +511,7 @@ export function buildCodexReviewArgv(context: JobRunnerArgvContext): string[] {
   return [
     'exec',
     '--json',
-    '-m',
-    'gpt-5.6-sol',
-    '-c',
-    'model_reasoning_effort="high"',
+    ...codexModelArgs('review'),
     '-s',
     'read-only',
     '-C',
