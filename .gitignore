@@ -37,3 +37,6 @@ Thumbs.db
 .octa/vitest-demo.config.mjs
 RELEASE-NOTES.md
 .octa/wakeword/
+
+# scratch scripts
+*.tmp.mjs
