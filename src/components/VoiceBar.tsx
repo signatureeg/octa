@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Mic, MicOff, Octagon, Volume2 } from 'lucide-react'
+import { Octagon } from 'lucide-react'
+import { OctaFace } from './OctaFace'
 import type { VoicePhase, VoiceState } from '../../electron/types'
 import type { Locale, TranslationKey } from '../i18n'
 import { t } from '../i18n'
@@ -37,13 +38,11 @@ export function VoiceBar({ locale }: { locale: Locale }): React.JSX.Element {
   const label = (key: TranslationKey): string => t(key, locale)
   const active = state.phase !== 'idle'
   const actionLabel = state.phase === 'speaking' ? label('voiceInterrupt') : active ? label('voiceStop') : label('voiceStart')
-  const Icon = state.phase === 'speaking' ? Volume2 : state.phase === 'idle' ? MicOff : Mic
 
   return (
     <section className={`voice-bar ${active ? 'active' : ''} ${state.phase}`} aria-label={label('voice')}>
-      <div className="voice-bar-mark" aria-hidden="true">
-        <Icon size={16} />
-        <span className="voice-pulse" />
+      <div className="voice-bar-face" aria-hidden="true">
+        <OctaFace phase={state.phase} size={52} />
       </div>
       <div className="voice-bar-copy">
         <strong>{label(phaseKeys[state.phase])}</strong>

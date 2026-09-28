@@ -49,7 +49,8 @@ const HEALTH_LABELS: Record<HealthCheckId, TranslationKey> = {
   vault: 'healthVault',
   'octa-home': 'healthOctaHome',
   'research-browser': 'healthResearchBrowser',
-  'wake-word': 'healthWakeWord'
+  'wake-word': 'healthWakeWord',
+  models: 'healthModels'
 }
 
 function installLabel(kind: GuidedInstallKind, locale: Locale): string {

@@ -36,7 +36,8 @@
           "gatePayload": {},
           "timeBudgetMs": { "type": "integer", "minimum": 1 },
           "inputTokenBudget": { "type": "integer", "minimum": 1 },
-          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 2 }
+          "maxRetries": { "type": "integer", "minimum": 0, "maximum": 2 },
+          "tier": { "enum": ["manager", "critic", "executor", "executor-fast", "reviewer", "claude-tools"] }
         }
       }
     }

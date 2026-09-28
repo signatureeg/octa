@@ -19,11 +19,13 @@ import { delimiter, basename, extname, join, relative, resolve } from 'node:path
 import type { ChatMessage, ChatProvider, ToolDefinition } from '../../cloud/chat'
 import { GeminiChatProvider } from '../../cloud/gemini-chat'
 import { requireAiAuth } from '../../cloud/vertex'
-import { DEFAULT_SETTINGS, type AppSettings, type JobAutonomy, type JobEvent, type JobGate, type JobResult, type JobStartRequest, type JobStatus } from '../../types'
+import { DEFAULT_SETTINGS, type AppSettings, type JobAutonomy, type JobEvent, type JobGate, type JobResult, type JobStartRequest, type JobStatus, type ModelTier, type SubAgentSpec } from '../../types'
+import { classifyCliFailure, fallbackCanHelp, resolveTier, tierForRunner, type CliFailure, type TierModel } from '../octa/models'
 import { JobsRepository } from '../../db/jobs'
 import { parseSkillFrontmatter, type SkillFrontmatter } from '../skills/frontmatter'
 import { runnerForSkill } from '../skills/policy'
-import { claudeModelArgs, codexModelArgs, DEFAULT_PHASE_MODELS } from '../octa/models'
+import { DEFAULT_PHASE_MODELS } from '../octa/models'
+import { COMPANY_FILES, knowledgePathFor } from '../octa/companies'
 import {
   REVIEW_SCHEMA,
   normalizeReviewRunResult,
@@ -70,6 +72,12 @@ export interface JobRunnerArgvContext {
   systemPromptFile?: string
   outputSchema?: string
   allowedTools?: string[]
+  /** Resolved from the model registry; omitted in tests, which get the tier defaults. */
+  model?: { model: string; effort: string }
+  /** Additional skills the agent may use (Claude: sub-agents; Codex: inlined). */
+  extraSkillPaths?: string[]
+  /** Let a Codex job reach the network (web research, site checks). */
+  network?: boolean
 }
 
 export interface JobRunnerOptions {
@@ -88,6 +96,10 @@ export interface JobRunnerOptions {
   reviewStep?: ReviewStepRunner
   reviewRunner?: ReviewStepRunner
   review?: ReviewStepRunner
+  /** Extra per-tier fallback models (spec 018); the manager tier falls back to Sonnet by default. */
+  tierFallbacks?: Partial<Record<ModelTier, string>>
+  /** Company whose brain jobs read when the job does not name one. */
+  getActiveCompany?: () => string | undefined
 }
 
 export type SpawnFunction = (
@@ -422,9 +434,12 @@ function dedupeTextEvents(events: JobEvent[]): JobEvent[] {
   })
 }
 
+export const HEADLESS_BLOCKED_TOOLS = ['ScheduleWakeup', 'CronCreate', 'CronDelete', 'RemoteTrigger', 'PushNotification', 'Monitor']
+
 function allowedToolsFor(autonomy: JobSpec['autonomy'] = 'assisted'): string[] {
   const readOnly = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch']
-  if (autonomy === 'led') return readOnly
+  // Draft-only still writes its own deliverables (out/); it just cannot run commands.
+  if (autonomy === 'led') return [...readOnly, 'Write', 'Edit']
   return [
     ...readOnly,
     'Write',
@@ -437,10 +452,23 @@ function allowedToolsFor(autonomy: JobSpec['autonomy'] = 'assisted'): string[] {
   ]
 }
 
+/** The job's own model (per-step tier or fallback), else the tier's phase from Settings → Models. */
+function modelFor(context: JobRunnerArgvContext, tier: ModelTier): { model: string; effort: string } {
+  return context.model ?? resolveTier(tier)
+}
+
+function codexArgsFor(context: JobRunnerArgvContext, tier: ModelTier): string[] {
+  const { model, effort } = modelFor(context, tier)
+  return ['-m', model, ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : [])]
+}
+
 export function buildClaudePlanArgv(context: JobRunnerArgvContext): string[] {
+  const { model, effort } = modelFor(context, 'manager')
   return [
     '-p',
-    ...claudeModelArgs('plan'),
+    '--model',
+    model,
+    ...(effort ? ['--effort', effort] : []),
     '--output-format',
     'json',
     '--add-dir',
@@ -461,11 +489,18 @@ export function buildClaudeSkillArgv(context: JobRunnerArgvContext, autonomy: Jo
     context.skillPath,
     '--add-dir',
     context.workspace,
+    ...(context.extraSkillPaths ?? []).flatMap((path) => ['--add-dir', path]),
     '--append-system-prompt-file',
     join(context.skillPath, 'SKILL.md'),
     '--allowedTools',
     ...(context.allowedTools ?? allowedToolsFor(autonomy)),
-    ...claudeModelArgs('skill')
+    // Extra skills are mounted as Claude Code sub-agents (.claude/agents in the job folder).
+    ...(context.extraSkillPaths?.length ? ['Task', 'Agent'] : []),
+    // A headless job ends when the CLI exits: loop, schedule and notify tools only stall it.
+    '--disallowedTools',
+    ...HEADLESS_BLOCKED_TOOLS,
+    '--model',
+    modelFor(context, 'claude-tools').model
   ]
 }
 
@@ -476,7 +511,7 @@ export function buildCodexExecArgv(context: JobRunnerArgvContext): string[] {
   const args = [
     'exec',
     '--json',
-    ...codexModelArgs('code'),
+    ...codexArgsFor(context, 'executor'),
     '-c',
     'service_tier="priority"',
     '-c',
@@ -487,6 +522,8 @@ export function buildCodexExecArgv(context: JobRunnerArgvContext): string[] {
     context.workspace
   ]
   if (context.skillPath) args.push('--add-dir', context.skillPath)
+  for (const path of context.extraSkillPaths ?? []) args.push('--add-dir', path)
+  if (context.network) args.push('-c', 'sandbox_workspace_write.network_access=true')
   args.push('--skip-git-repo-check')
   args.push('--output-schema', context.outputSchema ?? 'result.schema.json')
   return args
@@ -496,7 +533,7 @@ export function buildCodexCriticArgv(context: JobRunnerArgvContext): string[] {
   return [
     'exec',
     '--json',
-    ...codexModelArgs('critic'),
+    ...codexArgsFor(context, 'critic'),
     '-s',
     'read-only',
     '-C',
@@ -511,7 +548,7 @@ export function buildCodexReviewArgv(context: JobRunnerArgvContext): string[] {
   return [
     'exec',
     '--json',
-    ...codexModelArgs('review'),
+    ...codexArgsFor(context, 'reviewer'),
     '-s',
     'read-only',
     '-C',
@@ -717,7 +754,8 @@ function renderStepInstructions(spec: JobSpec): string {
 
 function renderKnowledge(knowledgePath?: string): string {
   if (!knowledgePath || !existsSync(knowledgePath)) return ''
-  const files = ['company.md', 'voice.md', 'icp.md', 'pricing.md']
+  // The company's master prompt (how to show up for it) leads, then the facts.
+  const files = COMPANY_FILES
   return files
     .map((file) => {
       const path = join(knowledgePath, file)
@@ -729,7 +767,20 @@ function renderKnowledge(knowledgePath?: string): string {
       }
     })
     .filter(Boolean)
+    .concat(renderOwnerMemory(knowledgePath))
     .join('\n')
+}
+
+/** knowledge/owner.md sits two levels above a company folder (knowledge/companies/<slug>). */
+function renderOwnerMemory(knowledgePath: string): string[] {
+  const candidates = [join(knowledgePath, 'owner.md'), join(knowledgePath, '..', '..', 'owner.md')]
+  const path = candidates.find((candidate) => existsSync(candidate))
+  if (!path) return []
+  try {
+    return [`\n### owner.md (what the owner asked Octa to remember)\n${readFileSync(path, 'utf8')}`]
+  } catch {
+    return []
+  }
 }
 
 function renderReviewFeedback(review?: ReviewResult): string {
@@ -754,7 +805,195 @@ function renderPrompt(
     ? `\n\n# Inlined SKILL.md (${skill.entry.name})\n\n${skill.skillMarkdown}`
     : ''
   const retry = retryError ? `\n\n## Previous attempt error\n\n${retryError}\nFix the error and retry the same job.` : ''
-  return `<octa>\nYou are running inside Octa Assistant. Reply in ${language}.\nCompany brain follows; treat it as ground truth and never contradict it.${renderKnowledge(spec.knowledgePath)}\nSkill to execute: ${spec.skill ?? 'the assigned job'}. Write deliverables to ./out. Do not send, publish, or pay; write what you would send to ./out and set status needs_approval. When information is missing, do not invent it: return status needs_input with questions[]. Finish by writing result.json matching the schema in ./contract.json.\nJob folder: ${folder}\n</octa>\n\n${renderBrief(spec)}${renderStepInstructions(spec)}${skillText}${retry}${renderReviewFeedback(review)}\n`
+  return `<octa>\nYou are running inside Octa Assistant. Reply in ${language}.\n${spec.company ? `You are working for the company "${spec.company}". ` : ''}Company brain follows (its master prompt first); treat it as ground truth and never contradict it.${renderKnowledge(spec.knowledgePath)}\nBefore you finish, run the 3-point QA on your deliverable: 1) is it simple, 2) is it useful today, 3) is the next step clear. Fix what fails.\nSkill to execute: ${spec.skill ?? 'the assigned job'}. Write deliverables to ./out. Do not send, publish, or pay; write what you would send to ./out and set status needs_approval. When information is missing, do not invent it: return status needs_input with questions[]. Finish by writing result.json matching the schema in ./contract.json.\nJob folder: ${folder}\n</octa>\n\n${renderBrief(spec)}${renderStepInstructions(spec)}${skillText}${retry}${renderReviewFeedback(review)}\n`
+}
+
+/**
+ * Mounts an agent's additional skills (spec 018 "skills as sub-agents"). Each lands in skills/<name>.
+ * For Claude runs each also becomes a Claude Code sub-agent (.claude/agents/<name>.md in the job
+ * folder, which is the CLI's working directory), so the main agent can delegate to it.
+ * Skills that cannot be resolved are reported in the prompt instead of failing the job.
+ */
+function mountExtraSkills(
+  folder: string,
+  names: string[],
+  resolveByName: (name: string) => SkillResolution,
+  asClaudeSubagents: boolean
+): Array<{ name: string; skill?: SkillResolution; error?: string }> {
+  return [...new Set(names)].map((name) => {
+    try {
+      const skill = resolveByName(name)
+      const target = join(folder, 'skills', name)
+      mkdirSync(join(folder, 'skills'), { recursive: true })
+      try {
+        symlinkSync(skill.skillPath, target, process.platform === 'win32' ? 'junction' : 'dir')
+      } catch {
+        cpSync(skill.skillPath, target, { recursive: true })
+      }
+      if (asClaudeSubagents) {
+        mkdirSync(join(folder, '.claude', 'agents'), { recursive: true })
+        const description = String(skill.frontmatter.description || skill.entry.description || `Specialist for ${name}`).replace(/\s+/g, ' ').slice(0, 900)
+        const body = skill.skillMarkdown.replace(/^---[\s\S]*?\n---\s*/, '')
+        writeFileSync(join(folder, '.claude', 'agents', `${name}.md`), [
+          '---',
+          `name: ${name}`,
+          `description: ${JSON.stringify(description)}`,
+          'tools: Read, Grep, Glob, WebFetch, WebSearch, Write, Edit',
+          '---',
+          '',
+          `You are the ${name} specialist working for the agent that called you. Your skill files (references, assets, scripts) are in ${skill.skillPath}. Follow the skill below, write any file you produce under ./out, and return a concise result.`,
+          '',
+          body
+        ].join('\n'), 'utf8')
+      }
+      return { name, skill }
+    } catch (error) {
+      return { name, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+}
+
+interface MountedTeamMember {
+  member: SubAgentSpec
+  skills: SkillResolution[]
+  missing: string[]
+  examples: string[]
+}
+
+const EXAMPLE_FILE = /\.(md|txt)$/i
+const EXAMPLES_BUDGET = 40_000
+
+/** The owner's examples for one specialist: knowledge/companies/<slug>/examples/<specialist>/*.md|txt (README excluded). */
+function readTeamExamples(knowledgePath: string | undefined, slug: string): string[] {
+  if (!knowledgePath) return []
+  const folder = join(knowledgePath, 'examples', slug)
+  if (!existsSync(folder)) return []
+  let budget = EXAMPLES_BUDGET
+  const examples: string[] = []
+  for (const name of readdirSync(folder).filter((file) => EXAMPLE_FILE.test(file) && !/^readme\./i.test(file)).sort()) {
+    if (budget <= 0) break
+    try {
+      const text = readFileSync(join(folder, name), 'utf8').trim().slice(0, budget)
+      if (!text) continue
+      budget -= text.length
+      examples.push(`### ${name}\n${text}`)
+    } catch {
+      // An unreadable example is skipped; the others still count.
+    }
+  }
+  return examples
+}
+
+/**
+ * Specialists under a lead agent become Claude Code sub-agents (.claude/agents/<slug>.md). They only
+ * act on the lead's brief, carry their skills, review checklist and the owner's examples, and never
+ * appear in the agent lineup.
+ */
+function mountTeam(
+  folder: string,
+  team: SubAgentSpec[],
+  resolveByName: (name: string) => SkillResolution,
+  context: { lead: string; company?: string; knowledgePath?: string }
+): MountedTeamMember[] {
+  if (team.length === 0) return []
+  mkdirSync(join(folder, '.claude', 'agents'), { recursive: true })
+  mkdirSync(join(folder, 'out', 'team'), { recursive: true })
+  return team.map((member) => {
+    const skills: SkillResolution[] = []
+    const missing: string[] = []
+    for (const name of member.skills) {
+      try {
+        skills.push(resolveByName(name))
+      } catch (error) {
+        missing.push(`${name} (${error instanceof Error ? error.message : String(error)})`)
+      }
+    }
+    const examples = readTeamExamples(context.knowledgePath, member.slug)
+    const tools = member.tools === 'research' ? 'Read, Grep, Glob, Write, Edit, WebFetch, WebSearch' : 'Read, Grep, Glob, Write, Edit'
+    const description = `${member.name}: ${member.scope} Works only on a brief from ${context.lead}.`.replace(/\s+/g, ' ').slice(0, 900)
+    const body = [
+      '---',
+      `name: ${member.slug}`,
+      `description: ${JSON.stringify(description)}`,
+      `tools: ${tools}`,
+      '---',
+      '',
+      `You are ${member.name}, a specialist on ${context.lead}'s team${context.company ? ` for the company "${context.company}"` : ''}. You never work on your own: ${context.lead} decides the strategy and briefs you, and reviews your draft before anyone sees it.`,
+      '',
+      '## Rules',
+      '- Work only on the brief you were given. The audience, awareness stage, offer, message and goal come from the brief; do not choose them yourself. If the brief is missing them, stop and return the questions instead of guessing.',
+      `- The company brain is ground truth${context.knowledgePath ? ` (${context.knowledgePath}: master-prompt.md, company.md, voice.md, icp.md, pricing.md, lessons.md; the owner's memory is owner.md two folders up)` : ''}. Never invent numbers, prices, client stories, quotes, results or claims it does not give you.`,
+      "- Follow the company's voice, its lessons and the owner's memory. A lesson overrides your skill's defaults.",
+      `- Write your draft under ./out/team/${member.slug}/. Never publish, send, pay or delete anything.`,
+      '- Before you return, check your draft against your review checklist point by point and fix what fails. Report honestly: pass or fail per point, with a reason.',
+      '- Return: the file path(s), your checklist self-check, and any open questions.',
+      '',
+      '## Role',
+      member.role,
+      '',
+      '## Scope',
+      member.scope,
+      '',
+      '## Definition of done',
+      member.definitionOfDone,
+      '',
+      '## Review checklist (your lead checks every point)',
+      ...member.checklist.map((point, index) => `${index + 1}. ${point}`),
+      '',
+      examples.length
+        ? `## Examples from the owner (how the work should look; match the level, do not copy)\n${examples.join('\n\n')}`
+        : '## Examples from the owner\nNone yet. Follow the skill and the brain.',
+      '',
+      ...skills.flatMap((skill) => [
+        `## Skill: ${skill.entry.name} (references, assets and scripts in ${skill.skillPath})`,
+        skill.skillMarkdown.replace(/^---[\s\S]*?\n---\s*/, '')
+      ]),
+      missing.length ? `\nSkills not available right now: ${missing.join('; ')}.` : ''
+    ].join('\n')
+    writeFileSync(join(folder, '.claude', 'agents', `${member.slug}.md`), body, 'utf8')
+    return { member, skills, missing, examples }
+  })
+}
+
+/** The lead's side of the team: who is on it and the mandatory review workflow. */
+function renderTeam(team: MountedTeamMember[] | undefined): string {
+  if (!team?.length) return ''
+  const lines = [
+    `\n\n# Your team (${team.length} specialists): you lead, they draft, you review`,
+    'They are Claude Code sub-agents; call them with the Task/Agent tool by their id. They never work on their own and never decide the strategy.',
+    ...team.map((item) => `- ${item.member.slug} — ${item.member.name}: ${item.member.scope}${item.examples.length ? ` (${item.examples.length} owner example${item.examples.length === 1 ? '' : 's'})` : ''}${item.missing.length ? ` [missing skills: ${item.missing.join(', ')}]` : ''}`),
+    '',
+    '## Team workflow (mandatory, in this order)',
+    '1. Diagnose first with your own skill: product, persona, awareness stage, offer, message, 3C funnel stage and the success metric. Write out/diagnosis.md. Never delegate the diagnosis or the decision.',
+    '2. Brief only the specialists this task needs, in RCCF form: Role (what they are for this task), Context (the diagnosis, the brain facts and the lessons that matter), Command (exactly what to draft), Format (file and structure).',
+    "3. Review every returned draft against: (a) your diagnosis, (b) the brain's facts (nothing invented), (c) the company voice, lessons and the owner's memory, (d) that specialist's checklist below. Mark every point pass or fail with a reason.",
+    '4. Send anything that fails back with precise notes. At most 2 rounds per specialist; if it still fails, drop it and say why.',
+    '5. Write out/review-log.md: for each specialist — the brief in one line, the rounds, every checklist point pass/fail, what changed, and the final verdict.',
+    '6. Your final deliverable contains only work that passed your review. An independent reviewer and then the owner check it after you.',
+    '',
+    '## Checklists per specialist'
+  ]
+  for (const item of team) {
+    lines.push(`### ${item.member.slug} — ${item.member.name}`, ...item.member.checklist.map((point, index) => `${index + 1}. ${point}`))
+  }
+  return lines.join('\n')
+}
+
+function renderExtraSkills(spec: JobSpec, extras: Array<{ name: string; skill?: SkillResolution; error?: string }> | undefined): string {
+  if (!extras?.length) return ''
+  const available = extras.filter((item) => item.skill)
+  const missing = extras.filter((item) => !item.skill)
+  const claude = spec.runner.startsWith('claude')
+  const lines = [`\n\n# Your other skills (${available.length})`]
+  if (claude && available.length) {
+    lines.push(`Each is a sub-agent you can delegate to with the Task/Agent tool: ${available.map((item) => item.name).join(', ')}. Hand each specialist the part of the work its skill covers, then combine their results into your deliverable.`)
+  }
+  for (const item of available) {
+    lines.push(`\n## Skill: ${item.name} (files: skills/${item.name})`)
+    if (!claude) lines.push(item.skill!.skillMarkdown)
+  }
+  if (missing.length) lines.push(`\nNot available right now: ${missing.map((item) => `${item.name} (${item.error})`).join('; ')}. Do the work without them.`)
+  return lines.join('\n')
 }
 
 function writeJobFiles(folder: string, spec: JobSpec): void {
@@ -980,6 +1219,16 @@ interface ActiveJob {
   collectedText: string
   lastStructured?: Record<string, unknown>
   lastError?: string
+  /** The agent's other skills, mounted under skills/ (sub-agents for Claude runs). */
+  extraSkills?: Array<{ name: string; skill?: SkillResolution; error?: string }>
+  /** Specialists under this lead agent, mounted as Claude sub-agents. */
+  team?: MountedTeamMember[]
+  /** Model the current attempt runs on (spec 018). */
+  tierModel?: TierModel
+  /** Set once when the tier's model was rejected and the fallback model is being tried. */
+  modelOverride?: string
+  /** Last recognised CLI error line (auth / model / version / rate limit) in this attempt. */
+  cliFailure?: CliFailure
   promise: Promise<JobResult>
 }
 
@@ -1065,6 +1314,8 @@ function finalStatusFor(active: ActiveJob, outcome: ProcessOutcome | undefined):
 export class JobRunner {
   private readonly jobs?: JobsRepository
   private readonly getSettings: () => AppSettings
+  private readonly tierFallbacks: Partial<Record<ModelTier, string>>
+  private readonly getActiveCompany: () => string | undefined
   private readonly homePath?: string
   private readonly skillsLibraryPath?: string
   private readonly spawn: SpawnFunction
@@ -1080,6 +1331,8 @@ export class JobRunner {
   constructor(options: JobRunnerOptions = {}) {
     this.jobs = options.jobs
     this.getSettings = options.getSettings ?? (() => DEFAULT_SETTINGS)
+    this.tierFallbacks = options.tierFallbacks ?? {}
+    this.getActiveCompany = options.getActiveCompany ?? (() => undefined)
     this.homePath = options.homePath
     this.skillsLibraryPath = options.skillsLibraryPath
     this.spawn = options.spawn ?? (nodeSpawn as unknown as SpawnFunction)
@@ -1100,9 +1353,15 @@ export class JobRunner {
     })
   }
 
-  startJob(spec: JobSpec): JobHandle {
-    const id = safeJobId(spec.id)
+  startJob(input: JobSpec): JobHandle {
+    const id = safeJobId(input.id)
     const settings = this.getSettings()
+    // Every job sees the company brain (the mirror of the vault's knowledge/ in Octa home) unless the
+    // caller points elsewhere. Before this, no caller passed knowledgePath, so skills ran without it.
+    const brainPath = join(resolve((input.homePath ?? this.homePath ?? settings.octaHomePath) || process.env.OCTA_HOME || DEFAULT_OCTA_HOME), 'knowledge')
+    // The job's company folder (named, else the active company), else the knowledge root.
+    const knowledgePath = existsSync(brainPath) ? knowledgePathFor(brainPath, input.company, this.getActiveCompany()) : undefined
+    const spec: JobSpec = input.knowledgePath || !knowledgePath ? input : { ...input, knowledgePath }
     const skill = spec.skillPath
       ? (() => {
           const skillPath = resolve(spec.skillPath!)
@@ -1123,6 +1382,10 @@ export class JobRunner {
     writeJobFiles(folder, spec)
     if (skill) mountSkill(folder, skill.skillPath)
     else mkdirSync(join(folder, 'skill'), { recursive: true })
+    const extraSkills = mountExtraSkills(folder, (spec.extraSkills ?? []).filter((name) => name !== skill?.entry.name), (name) => this.resolveSkill(name, spec), spec.runner.startsWith('claude'))
+    const team = spec.runner.startsWith('claude')
+      ? mountTeam(folder, spec.team ?? [], (name) => this.resolveSkill(name, spec), { lead: String(asRecord(spec.input)?.agent || 'the lead agent'), company: spec.company, knowledgePath: spec.knowledgePath })
+      : []
 
     const emitter = new EventEmitter()
     const active: ActiveJob = {
@@ -1130,6 +1393,8 @@ export class JobRunner {
       folder,
       spec,
       skill,
+      extraSkills,
+      team,
       emitter,
       controller: new AbortController(),
       cancelled: false,
@@ -1202,6 +1467,10 @@ export class JobRunner {
       timestamp: this.now().toISOString()
     } as JobEvent
     appendFileSync(join(active.folder, 'log.jsonl'), `${JSON.stringify(full)}\n`, 'utf8')
+    if (value.type === 'text' || value.type === 'error') {
+      const failure = classifyCliFailure(value.type === 'text' ? value.text : value.message)
+      if (failure) active.cliFailure = failure
+    }
     active.emitter.emit('event', full)
     this.onEvent?.(full)
     return full
@@ -1367,7 +1636,7 @@ export class JobRunner {
 
   private async executeGemini(active: ActiveJob): Promise<ProcessOutcome> {
     const provider = active.spec.chatProvider ?? this.chatProvider ?? new GeminiChatProvider(requireAiAuth(this.getSettings()))
-    const prompt = renderPrompt(active.spec, active.folder, active.skill)
+    const prompt = renderPrompt(active.spec, active.folder, active.skill) + renderExtraSkills(active.spec, active.extraSkills) + renderTeam(active.team)
     const messages = active.spec.messages ?? [{ role: 'user', content: prompt }]
     const timeoutMs = this.remainingBudget(active)
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -1410,10 +1679,22 @@ export class JobRunner {
     while (attempt < Math.max(normalAttempts, 3)) {
       attempt += 1
       if (active.cancelled || active.timedOut || active.overBudget) break
+      active.cliFailure = undefined
       lastOutcome = await this.executeSubprocess(active, retryError, review)
       if (!lastOutcome.error && lastOutcome.exitCode === 0) return lastOutcome
       if (active.cancelled || active.timedOut || active.overBudget) break
       retryError = lastOutcome.error ?? `Process exited with code ${lastOutcome.exitCode}.`
+      const failure = active.cliFailure ?? classifyCliFailure(retryError)
+      const fallback = active.tierModel?.fallbackModel
+      if (fallbackCanHelp(failure) && fallback && !active.modelOverride && fallback !== active.tierModel?.model) {
+        // The CLI works but rejected this model: one extra attempt on the tier's fallback model.
+        active.modelOverride = fallback
+        this.emit(active, { type: 'error', message: `Model ${active.tierModel?.model} unavailable (${failure?.kind}); retrying on ${fallback}. ${failure?.fix ?? ''}`.trim() })
+        attempt -= 1
+        continue
+      }
+      // Signing in or updating the CLI is on the owner; retrying the same call cannot succeed.
+      if (failure?.kind === 'auth' || failure?.kind === 'cli_outdated' || failure?.kind === 'model_unavailable') break
       const capacity = isCapacityError(retryError)
       const maxCapacityAttempts = 3
       const canRetryCapacity = capacity && attempt < maxCapacityAttempts
@@ -1459,6 +1740,20 @@ export class JobRunner {
       systemPromptFile: runner === 'claude-plan' ? 'planner.md' : undefined,
       outputSchema: runner === 'codex-exec' || runner === 'codex-scout' ? 'result.schema.json' : runner === 'codex-critic' ? 'critique.schema.json' : 'review.schema.json'
     }
+    context.extraSkillPaths = [...new Set([
+      ...(active.extraSkills ?? []).flatMap((item) => item.skill ? [item.skill.skillPath] : []),
+      // Team specialists read their skills' references and the company brain.
+      ...(active.team ?? []).flatMap((item) => item.skills.map((skill) => skill.skillPath)),
+      ...(active.team?.length && active.spec.knowledgePath ? [active.spec.knowledgePath] : [])
+    ])]
+    if (active.spec.network) context.network = true
+    const tier = tierForRunner(runner, active.spec.tier)
+    if (tier) {
+      const resolved = resolveTier(tier, this.getSettings().phaseModels)
+      const fallbackModel = this.tierFallbacks[tier] ?? resolved.fallbackModel
+      active.tierModel = { ...resolved, ...(fallbackModel && fallbackModel !== resolved.model ? { fallbackModel } : {}) }
+      context.model = { model: active.modelOverride ?? active.tierModel.model, effort: active.tierModel.effort }
+    }
     const argv = active.spec.argsOverride ?? buildRunnerArgv(runner, context, active.spec.autonomy)
     const executable = active.spec.executable ?? (parser === 'claude'
       ? this.claudeBinary ?? resolveCliBinary('claude')
@@ -1473,7 +1768,7 @@ export class JobRunner {
     review?: ReviewResult
   ): Promise<ProcessOutcome> {
     const command = this.commandFor(active)
-    const prompt = renderPrompt(active.spec, active.folder, active.skill, retryError, review)
+    const prompt = renderPrompt(active.spec, active.folder, active.skill, retryError, review) + renderExtraSkills(active.spec, active.extraSkills) + renderTeam(active.team)
     let child: ChildProcess
     try {
       child = this.spawn(command.executable, command.argv, {
@@ -1570,7 +1865,11 @@ export class JobRunner {
       child.once('close', (code, signal) => {
         flushStdout()
         if (stderrBuffer.trim()) this.emit(active, { type: 'error', message: stderrBuffer.trim() })
-        const error = processError ?? (active.cancelled ? undefined : code === 0 ? undefined : `Process exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}.`)
+        const exitText = `exit code ${code ?? 'unknown'}${signal ? `, ${signal}` : ''}`
+        // Prefer the CLI's own reason ("API Error: 401 …", "does not support this model …") over the bare exit code.
+        const error = processError ?? (active.cancelled ? undefined : code === 0 ? undefined : active.cliFailure
+          ? `${active.cliFailure.message} (${exitText}).`
+          : `Process exited with code ${code ?? 'unknown'}${signal ? ` (${signal})` : ''}.`)
         settle({ exitCode: code, signal, error })
       })
 

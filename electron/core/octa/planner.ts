@@ -21,6 +21,8 @@ import {
   rejectUnsourced,
   type LedgerInput
 } from './sources'
+import { isModelTier, MODEL_TIERS } from './models'
+import type { ModelTier } from '../../types'
 import planSchema from './schemas/plan.schema.json'
 import critiqueSchema from './schemas/critique.schema.json'
 
@@ -50,6 +52,8 @@ export interface PlanStep {
   gate: 'none' | 'review' | 'approve'
   autonomy: 'led' | 'assisted' | 'auto'
   acceptance: string[]
+  /** Model tier the manager picked for this step (spec 018); the runner's default when absent. */
+  tier?: ModelTier
 }
 
 export interface PlanReply {
@@ -445,7 +449,7 @@ function validateReply(value: unknown, path: string): string[] {
 
 function validateStep(value: unknown, path: string): string[] {
   if (!isRecord(value)) return [`${path} must be an object.`]
-  const allowed = new Set(['id', 'runner', 'skill', 'prompt', 'input', 'needs', 'gate', 'autonomy', 'acceptance'])
+  const allowed = new Set(['id', 'runner', 'skill', 'prompt', 'input', 'needs', 'gate', 'autonomy', 'acceptance', 'tier'])
   const errors = Object.keys(value)
     .filter((key) => !allowed.has(key))
     .map((key) => `${path}.${key} is not allowed.`)
@@ -459,6 +463,7 @@ function validateStep(value: unknown, path: string): string[] {
   if (!['none', 'review', 'approve'].includes(String(value.gate))) errors.push(`${path}.gate is invalid.`)
   if (!['led', 'assisted', 'auto'].includes(String(value.autonomy))) errors.push(`${path}.autonomy is invalid.`)
   errors.push(...arrayOfStrings(value.acceptance, `${path}.acceptance`))
+  if (value.tier !== undefined && !isModelTier(value.tier)) errors.push(`${path}.tier must be one of ${MODEL_TIERS.join(', ')}.`)
   if (value.skill === undefined && value.prompt === undefined) errors.push(`${path} needs skill or prompt.`)
   return errors
 }

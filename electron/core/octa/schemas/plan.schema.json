@@ -42,7 +42,8 @@
           "needs": { "type": "array", "items": { "type": "string" } },
           "gate": { "type": "string", "enum": ["none", "review", "approve"] },
           "autonomy": { "type": "string", "enum": ["led", "assisted", "auto"] },
-          "acceptance": { "type": "array", "items": { "type": "string" } }
+          "acceptance": { "type": "array", "items": { "type": "string" } },
+          "tier": { "type": "string", "enum": ["manager", "critic", "executor", "executor-fast", "reviewer", "claude-tools"] }
         },
         "required": ["id", "runner", "needs", "gate", "autonomy", "acceptance"],
         "anyOf": [

@@ -75,8 +75,8 @@ function fakeWorkflowRunner(
 }
 
 describe('workflow definitions and interpolation', () => {
-  it('validates all six launch seeds and persists the recurring defaults', () => {
-    expect(LAUNCH_WORKFLOWS).toHaveLength(6)
+  it('validates all launch seeds (W1-W9) and persists the recurring defaults', () => {
+    expect(LAUNCH_WORKFLOWS.map((workflow) => workflow.id)).toEqual(['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9'])
     for (const workflow of LAUNCH_WORKFLOWS) {
       const result = validateWorkflow(workflow)
       expect(result.valid, `${workflow.id}: ${result.errors.join(' ')}`).toBe(true)

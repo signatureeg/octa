@@ -288,6 +288,16 @@ export interface JobStartRequest {
   retryDelayMs?: number
   /** Workflow orchestration keeps review in spec 006 so it can persist gate state. */
   skipReview?: boolean
+  /** Model tier chosen by the planner for this step; falls back to the runner's default tier. */
+  tier?: ModelTier
+  /** Company this job works for (knowledge/companies/<slug>); the active company when absent. */
+  company?: string
+  /** More skills the job may use besides `skill` (Claude: sub-agents; Codex: inlined). */
+  extraSkills?: string[]
+  /** Specialists that work only under this job's agent (Claude sub-agents, reviewed by the lead). */
+  team?: SubAgentSpec[]
+  /** Allow network access inside the Codex sandbox (web research, site checks). */
+  network?: boolean
 }
 
 export interface JobStartResponse {
@@ -381,6 +391,77 @@ export interface UpdateProgress {
 }
 
 /** Settings that belong to the Octa foundation and are safe to expose to the renderer. */
+/** Model roles. Code names a tier; the concrete model comes from settings (spec 018). */
+export type ModelTier = 'manager' | 'critic' | 'executor' | 'executor-fast' | 'reviewer' | 'claude-tools'
+
+
+export type AgentTrustStage = 'draft-only' | 'approve-each' | 'auto'
+
+/** What W7 (or the owner) specifies for a new agent. */
+/**
+ * A specialist that works ONLY under its lead agent (owner request, 2026-09-28): it is never in the
+ * agent lineup, never runs on its own, takes a brief from the lead, and its draft is reviewed by the
+ * lead against its checklist before it reaches the owner.
+ */
+export interface SubAgentSpec {
+  /** File-safe id: lowercase latin, digits, dashes (it becomes .claude/agents/<slug>.md). */
+  slug: string
+  name: string
+  role: string
+  scope: string
+  definitionOfDone: string
+  skills: string[]
+  /** What the lead checks before accepting this specialist's work. */
+  checklist: string[]
+  /** research specialists may browse the web; writers only read the brain and write drafts. */
+  tools: 'write' | 'research'
+}
+
+export interface AgentSpec {
+  name: string
+  identity: string
+  scope: string
+  definitionOfDone: string
+  skills: string[]
+  tier: ModelTier
+  trustStage: AgentTrustStage
+  schedule?: 'daily' | 'weekly' | 'monthly'
+  /** Department the agent reports into under Octa (e.g. marketing, development). */
+  department?: string
+  /** Specialists that work only under this agent, reviewed by it (see SubAgentSpec). */
+  team?: SubAgentSpec[]
+}
+
+export interface AgentRecord extends AgentSpec {
+  id: string
+  department: string
+  status: 'active' | 'paused'
+  createdFrom: string | null
+  createdAt: string
+  updatedAt: string
+  cleanStreak: number
+  runs: number
+  cleanRuns: number
+  /** A promotion Octa proposes after a clean streak; applied only when the owner approves. */
+  pendingPromotion?: AgentTrustStage
+  lastDemotion?: { at: string; from: AgentTrustStage; to: AgentTrustStage; reason: string }
+}
+
+export interface AgentRunRecord {
+  agentId: string
+  jobId: string
+  startedAt: string
+  result: AgentOutcome['result']
+  reason?: string
+  /** Task on the Tasks page this run was delegated from. */
+  taskId?: string
+}
+
+export interface AgentOutcome {
+  result: 'clean' | 'rejected' | 'failed' | 'pending'
+  reason?: string
+}
+
 export interface AppSettings {
   geminiApiKey: string
   groqApiKey: string
@@ -414,7 +495,16 @@ export interface AppSettings {
   wakeGreeting: string
   /** Model and reasoning level for each phase of the build/workflow engine (Settings → Models). */
   phaseModels: PhaseModels
+  /** Octa's spoken voice (Gemini prebuilt voice). */
+  voiceName: VoiceName
+  /** Whole-interface zoom (1 = original size). */
+  uiScale: number
 }
+
+/** Warm, natural Gemini voices offered in Settings; Sulafat is the default partner voice. */
+export const VOICE_NAMES = ['Sulafat', 'Aoede', 'Despina', 'Achernar', 'Vindemiatrix', 'Callirrhoe', 'Leda', 'Kore', 'Gacrux'] as const
+export type VoiceName = (typeof VOICE_NAMES)[number]
+export const UI_SCALES = [1, 1.1, 1.2, 1.3, 1.4] as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
   geminiApiKey: '',
@@ -444,7 +534,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   triggerType: 'keyboard',
   mouseButton: 4,
   wakeGreeting: 'إيه يا عميل، عايز إيه؟',
-  phaseModels: DEFAULT_PHASE_MODELS
+  phaseModels: DEFAULT_PHASE_MODELS,
+  voiceName: 'Sulafat',
+  uiScale: 1.2
 }
 
 export interface RendererState {

@@ -3,10 +3,10 @@ import {
   BellRing,
   Check,
   Cloud,
-  Cpu,
   FolderOpen,
   Github,
   Globe2,
+  Cpu,
   HeartPulse,
   KeyRound,
   Languages,
@@ -22,7 +22,7 @@ import {
   Sun,
   Wrench
 } from 'lucide-react'
-import type { AiTestResult, AppSettings } from '../../electron/types'
+import { UI_SCALES, VOICE_NAMES, type AiTestResult, type AppSettings, type VoiceName } from '../../electron/types'
 import { DEFAULT_PHASE_MODELS, MODEL_PHASES, PHASE_INFO, type ModelPhase } from '../../electron/core/octa/models'
 import type { BrowserChallengeEvent, ResearchBrowserStatus, ResearchLoginSite } from '../../electron/core/octa/browser'
 import type { Locale, TranslationKey } from '../i18n'
@@ -312,6 +312,11 @@ export function SettingsPage({
         <section className="settings-section voice-settings-section">
           <SectionHeading icon={<Mic size={19} />} title={label('voiceSection')} detail={label('voiceSectionDetail')} />
           <div className="settings-fields">
+            <SettingField icon={<Mic size={18} />} label={label('voiceName')} detail={label('voiceNameDetail')}>
+              <select aria-label={label('voiceName')} onChange={(event) => setValue('voiceName', event.target.value as VoiceName)} value={draft.voiceName}>
+                {VOICE_NAMES.map((name) => <option key={name} value={name}>{name}{name === 'Sulafat' ? ` · ${label('voiceNameRecommended')}` : ''}</option>)}
+              </select>
+            </SettingField>
             <SettingField icon={<Mic size={18} />} label={label('voiceLiveModel')} detail={label('voiceLiveModelDetail')}>
               <input dir="ltr" aria-label={label('voiceLiveModel')} readOnly spellCheck={false} value={draft.geminiLiveModel || label('notAvailable')} />
             </SettingField>
@@ -357,6 +362,7 @@ export function SettingsPage({
           </div>
         </section>
 
+
         <section className="settings-section">
           <SectionHeading icon={<BellRing size={19} />} title={label('notificationsSection')} detail={label('notificationsSectionDetail')} />
           <div className="settings-fields">
@@ -385,9 +391,9 @@ export function SettingsPage({
           <SectionHeading icon={<Cpu size={19} />} title={label('modelsSection')} detail={label('modelsSectionDetail')} />
           <div className="settings-fields">
             {MODEL_PHASES.map((phase) => {
-              const current = draft.phaseModels[phase]
+              const current = draft.phaseModels?.[phase] ?? DEFAULT_PHASE_MODELS[phase]
               const info = PHASE_INFO[phase]
-              const update = (patch: Partial<typeof current>): void => setValue('phaseModels', { ...draft.phaseModels, [phase]: { ...current, ...patch } })
+              const update = (patch: Partial<typeof current>): void => setValue('phaseModels', { ...DEFAULT_PHASE_MODELS, ...draft.phaseModels, [phase]: { ...current, ...patch } })
               return (
                 <SettingField key={phase} icon={<Cpu size={18} />} label={label(PHASE_LABELS[phase])} detail={`${label(PHASE_DETAILS[phase])} · ${info.cli === 'claude' ? 'Claude Code' : 'Codex'}`}>
                   <div className="phase-model-control">
@@ -504,6 +510,11 @@ export function SettingsPage({
               <select aria-label={label('theme')} onChange={(event) => setValue('theme', event.target.value as AppSettings['theme'])} value={draft.theme}>
                 <option value="dark">{label('dark')}</option>
                 <option value="light">{label('light')}</option>
+              </select>
+            </SettingField>
+            <SettingField icon={<Palette size={18} />} label={label('uiScale')} detail={label('uiScaleDetail')}>
+              <select aria-label={label('uiScale')} onChange={(event) => setValue('uiScale', Number(event.target.value))} value={String(draft.uiScale)}>
+                {UI_SCALES.map((scale) => <option key={scale} value={String(scale)}>{Math.round(scale * 100)}%{scale === 1.2 ? ` · ${label('voiceNameRecommended')}` : ''}</option>)}
               </select>
             </SettingField>
             <SettingField icon={<Languages size={18} />} label={label('locale')} detail={label('languageHint')}>

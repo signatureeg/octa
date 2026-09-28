@@ -16,6 +16,9 @@ import type {
   ResearchStatusResponse
 } from './core/octa/research'
 import type { BuildEvent, BuildState } from './core/octa/build'
+import type { LearningEntry, LearningLog } from './core/octa/learning'
+
+export interface LearningState { company: string; lessons: LearningEntry[]; gaps: LearningEntry[]; memory: LearningEntry[] }
 import type {
   WorkflowDefinition,
   WorkflowEvent,
@@ -32,6 +35,9 @@ import type {
   HealthReport
 } from './core/octa/health'
 import type {
+  AgentRecord,
+  AgentRunRecord,
+  AgentTrustStage,
   AiTestResult,
   ClientRecord,
   DocumentBrand,
@@ -57,10 +63,53 @@ import type {
 import type { UpdateCheckResult } from './core/octa/update'
 import type { ApprovalResult } from './core/voice/readback'
 import type { PlanRecord } from './db/jobs'
+import type { CompanyInfo } from './core/octa/companies'
+import type { WorkRequest } from './db/requests'
 
 export interface WindowChromeState { maximized: boolean; focused: boolean }
 
 const api = {
+  requests: {
+    list: (status?: 'proposed' | 'started' | 'cancelled'): Promise<WorkRequest[]> => ipcRenderer.invoke('requests:list', status),
+    start: (id: string): Promise<WorkRequest> => ipcRenderer.invoke('requests:start', id),
+    cancel: (id: string): Promise<WorkRequest> => ipcRenderer.invoke('requests:cancel', id),
+    onChanged: (listener: (proposed: WorkRequest[]) => void): (() => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, proposed: WorkRequest[]): void => listener(proposed)
+      ipcRenderer.on('requests:changed', wrapped)
+      return () => ipcRenderer.removeListener('requests:changed', wrapped)
+    }
+  },
+  learning: {
+    list: (): Promise<LearningState> => ipcRenderer.invoke('learning:list'),
+    remove: (log: LearningLog, id: string): Promise<LearningState> => ipcRenderer.invoke('learning:remove', log, id),
+    add: (log: LearningLog, tag: string, text: string): Promise<LearningState> => ipcRenderer.invoke('learning:add', log, tag, text),
+    onChanged: (listener: (state: LearningState) => void): (() => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, state: LearningState): void => listener(state)
+      ipcRenderer.on('learning:changed', wrapped)
+      return () => ipcRenderer.removeListener('learning:changed', wrapped)
+    }
+  },
+  companies: {
+    list: (): Promise<{ companies: CompanyInfo[]; active: string }> => ipcRenderer.invoke('companies:list'),
+    setActive: (slug: string): Promise<{ companies: CompanyInfo[]; active: string }> => ipcRenderer.invoke('companies:setActive', slug),
+    onChanged: (listener: (state: { companies: CompanyInfo[]; active: string }) => void): (() => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, state: { companies: CompanyInfo[]; active: string }): void => listener(state)
+      ipcRenderer.on('companies:changed', wrapped)
+      return () => ipcRenderer.removeListener('companies:changed', wrapped)
+    }
+  },
+  agents: {
+    list: (): Promise<AgentRecord[]> => ipcRenderer.invoke('agents:list'),
+    runs: (id: string): Promise<AgentRunRecord[]> => ipcRenderer.invoke('agents:runs', id),
+    update: (id: string, update: Partial<Pick<AgentRecord, 'identity' | 'scope' | 'definitionOfDone' | 'skills' | 'tier' | 'status' | 'department'>> & { schedule?: AgentRecord['schedule'] | null }): Promise<AgentRecord> =>
+      ipcRenderer.invoke('agents:update', id, update),
+    setTrust: (id: string, stage: AgentTrustStage): Promise<AgentRecord> => ipcRenderer.invoke('agents:setTrust', id, stage),
+    approvePromotion: (id: string): Promise<AgentRecord> => ipcRenderer.invoke('agents:approvePromotion', id),
+    dismissPromotion: (id: string): Promise<AgentRecord> => ipcRenderer.invoke('agents:dismissPromotion', id),
+    /** Proposes a W9 request for the agent (workflow-first); it starts only via requests.start. */
+    run: (id: string, task?: string, taskId?: string): Promise<WorkRequest> => ipcRenderer.invoke('agents:run', id, task, taskId),
+    create: (spec: Partial<AgentRecord>): Promise<AgentRecord> => ipcRenderer.invoke('agents:create', spec)
+  },
   state: (): Promise<RendererState> => ipcRenderer.invoke('app:state'),
   update: {
     check: (): Promise<UpdateCheckResult> => ipcRenderer.invoke('app:update:check'),

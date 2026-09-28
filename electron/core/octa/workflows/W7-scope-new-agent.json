@@ -1,0 +1,81 @@
+{
+  "id": "W7",
+  "name": "scope-new-agent",
+  "version": 2,
+  "description": "Scope, gate, and hand off a brand-new recurring agent using the Rule of R and the AGENT build sequence, before any workflow or skill is wired in.",
+  "autonomy": "assisted",
+  "acceptance": [
+    "The verdict (build an agent or not) is explicit and justified against the Rule of R.",
+    "When the verdict is build, the Definition of Done, narrow scope, and trust stage are explicit.",
+    "Nothing is wired into a live workflow without explicit approval."
+  ],
+  "steps": [
+    {
+      "id": "s1",
+      "needs": [],
+      "runner": "gemini-inline",
+      "prompt": "Collect the raw ask by voice: what is the repetitive task, how often it recurs, who or what does it today, and the rough time it costs per occurrence.",
+      "input": {
+        "ask": "{{brief.text}}"
+      },
+      "gate": "none",
+      "autonomy": "assisted",
+      "acceptance": [
+        "The task, its frequency, and its current owner are explicit."
+      ]
+    },
+    {
+      "id": "s2",
+      "needs": [
+        "s1"
+      ],
+      "runner": "claude-skill",
+      "skill": "ai-ops-playbook",
+      "prompt": "Apply the Rule of R (Repetitive, Rules-based, Return on time) to the intake. If it fails the filter, say so and stop. If it passes, draft the AGENT build sequence: Aim (outcome plus Definition of Done), Give identity, Equip, Narrow scope, and the first Trust stage. Recommend which existing Octa runner and model tier fits this job, using the manager and specialist pattern.",
+      "input": {
+        "intake": "{{steps.s1.out}}"
+      },
+      "gate": "review",
+      "autonomy": "assisted",
+      "acceptance": [
+        "The Rule of R verdict is explicit.",
+        "When the verdict is build, the Definition of Done and narrow scope are explicit.",
+        "A specific existing runner and model tier is recommended, not invented."
+      ]
+    },
+    {
+      "id": "s3",
+      "needs": [
+        "s2"
+      ],
+      "runner": "claude-skill",
+      "skill": "ai-ops-playbook",
+      "prompt": "Write out/agent-spec.md: the approved agent's identity (SOUL/IDENTITY/USER equivalent), its narrow scope, its Definition of Done, the recommended model tier and the first trust stage it should launch at. ALSO write out/agent.json with exactly these keys: name (short, unique), identity, scope (one narrow job), definitionOfDone, skills (array of registered skill names it may use), tier (one of manager, executor, executor-fast, claude-tools), trustStage (draft-only or approve-each; never auto for a new agent), and optionally schedule (daily, weekly or monthly) when the job recurs on its own.",
+      "input": {
+        "scoping": "{{steps.s2.out}}"
+      },
+      "gate": "approve",
+      "autonomy": "assisted",
+      "acceptance": [
+        "out/agent-spec.md exists and names a single narrow job.",
+        "out/agent.json exists and matches the agent schema."
+      ]
+    },
+    {
+      "id": "s4",
+      "needs": [
+        "s3"
+      ],
+      "runner": "gemini-inline",
+      "prompt": "Read the agent back to the owner; only after an explicit go, register the agent so it appears on the Agents page.",
+      "input": {
+        "spec": "{{steps.s3.out}}"
+      },
+      "gate": "approve",
+      "autonomy": "assisted",
+      "acceptance": [
+        "The agent is registered only after explicit go."
+      ]
+    }
+  ]
+}

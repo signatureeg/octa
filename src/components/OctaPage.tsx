@@ -23,13 +23,15 @@ import type { OctaApi } from '../../electron/preload'
 import type { PlanRecord } from '../../electron/db/jobs'
 import type { HealthReport } from '../../electron/core/octa/health'
 import type { WorkflowListItem } from '../../electron/core/octa/workflows'
-import type { JobEvent, JobOutput, JobRecord, JobStatus } from '../../electron/types'
+import type { JobEvent, JobOutput, JobRecord, JobStatus, VoiceState } from '../../electron/types'
 import type { PlanStep, PlannerResult } from '../../electron/core/octa/planner'
 import type { SourceLedgerEntry } from '../../electron/core/octa/sources'
 import type { Locale, TranslationKey } from '../i18n'
 import { t } from '../i18n'
 import { PlanCard } from './PlanCard'
+import { RequestsInbox } from './RequestsInbox'
 import { SourcesTable } from './SourcesTable'
+import { OctaFace, useVoiceState } from './OctaFace'
 
 export interface ConversationMessage {
   id?: string
@@ -459,6 +461,14 @@ function WelcomeBlock({
   )
 }
 
+const PRESENCE_KEYS: Record<VoiceState['phase'], TranslationKey> = {
+  idle: 'presenceIdle',
+  listening: 'presenceListening',
+  thinking: 'presenceThinking',
+  speaking: 'presenceSpeaking',
+  error: 'presenceError'
+}
+
 function ConversationColumn({
   locale,
   conversation,
@@ -478,6 +488,7 @@ function ConversationColumn({
   onSubmit: () => void
   inputRef: React.RefObject<HTMLTextAreaElement | null>
 }): React.JSX.Element {
+  const voice = useVoiceState()
   const submitOnKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault()
@@ -487,12 +498,13 @@ function ConversationColumn({
 
   return (
     <section className="octa-panel octa-conversation" aria-labelledby="octa-conversation-title">
-      <header className="octa-panel-heading">
-        <div>
+      <header className="octa-panel-heading octa-presence">
+        <OctaFace phase={voice.phase} size={112} label={label('octaFaceLabel', locale)} />
+        <div className="octa-presence-copy">
           <span className="octa-eyebrow">{label('conversationEyebrow', locale)}</span>
           <h2 id="octa-conversation-title">{label('conversationTitle', locale)}</h2>
+          <p className={`octa-presence-status ${voice.phase}`} aria-live="polite">{label(PRESENCE_KEYS[voice.phase], locale)}</p>
         </div>
-        <span className="octa-live-chip"><span className="octa-live-dot" />{label('conversationLive', locale)}</span>
       </header>
 
       <div className="octa-message-list" aria-live="polite">
@@ -1050,6 +1062,8 @@ export function OctaPage({
       </header>
 
       {error && <p className="octa-page-error" role="alert"><AlertCircle size={15} />{error}</p>}
+
+      <RequestsInbox compact locale={locale} />
 
       {!plan && !planning && <WelcomeBlock health={health} jobs={jobs} locale={locale} onOpenSetup={onOpenSetup} onStartWorkflow={startWorkflowPrompt} plans={recentPlans} workflows={workflows} />}
 

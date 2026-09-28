@@ -789,6 +789,10 @@ export class JobsRepository {
     return rows.map(mapWorkflowStats)
   }
 
+  deleteRecurringJob(id: string): boolean {
+    return this.database.prepare('DELETE FROM recurring_jobs WHERE id = ?').run(id).changes > 0
+  }
+
   saveRecurringJob(input: SaveRecurringJobInput): RecurringJobRecord {
     const id = input.id.trim()
     if (!id) throw new Error('Recurring job id is required.')

@@ -22,16 +22,43 @@ export function nextStartTime(currentTime: number, scheduledEnd: number, lead = 
   return scheduledEnd > currentTime ? scheduledEnd : currentTime + lead
 }
 
+let activePlayer: VoiceAudioPlayer | undefined
+
+/** How loud Octa is speaking right now, 0..1 (drives the face's mouth). */
+export function currentVoiceLevel(): number {
+  return activePlayer?.level() ?? 0
+}
+
 export class VoiceAudioPlayer {
   private context: AudioContext | undefined
+  private analyser: AnalyserNode | undefined
+  private readonly samples = new Float32Array(512)
   private nextStart = 0
   private queue: Promise<void> = Promise.resolve()
   private epoch = 0
   private readonly sources = new Set<AudioBufferSourceNode>()
 
+  constructor() {
+    activePlayer = this
+  }
+
   private getContext(): AudioContext {
-    this.context ??= new AudioContext({ latencyHint: 'interactive' })
+    if (!this.context) {
+      this.context = new AudioContext({ latencyHint: 'interactive' })
+      this.analyser = this.context.createAnalyser()
+      this.analyser.fftSize = 1024
+      this.analyser.connect(this.context.destination)
+    }
     return this.context
+  }
+
+  /** RMS loudness of what is playing now, scaled to 0..1. */
+  level(): number {
+    if (!this.analyser || !this.context || this.context.state !== 'running' || this.sources.size === 0) return 0
+    this.analyser.getFloatTimeDomainData(this.samples)
+    let sum = 0
+    for (const sample of this.samples) sum += sample * sample
+    return Math.min(1, Math.sqrt(sum / this.samples.length) * 4)
   }
 
   /** Chunks are scheduled strictly in arrival order, even when decoding one takes longer. */
@@ -58,7 +85,7 @@ export class VoiceAudioPlayer {
     if (epoch !== this.epoch) return
     const source = context.createBufferSource()
     source.buffer = buffer
-    source.connect(context.destination)
+    source.connect(this.analyser ?? context.destination)
     this.sources.add(source)
     source.addEventListener('ended', () => this.sources.delete(source), { once: true })
     const start = nextStartTime(context.currentTime, this.nextStart)
@@ -81,6 +108,7 @@ export class VoiceAudioPlayer {
 
   async dispose(): Promise<void> {
     this.stop()
+    if (activePlayer === this) activePlayer = undefined
     await this.context?.close()
     this.context = undefined
   }

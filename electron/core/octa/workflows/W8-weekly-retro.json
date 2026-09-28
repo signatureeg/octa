@@ -1,0 +1,60 @@
+{
+  "id": "W8",
+  "name": "weekly-retro",
+  "version": 2,
+  "description": "Once a week Octa reviews itself: failures, rejections, the lessons the owner taught and work no agent could do. It proposes a few concrete improvements (fixes, lessons to keep, new agents or skills) for the owner to accept or ignore.",
+  "autonomy": "assisted",
+  "acceptance": [
+    "Every proposal names what to change, why, and how to tell if it worked.",
+    "Nothing changes until the owner approves; approved proposals become tasks."
+  ],
+  "steps": [
+    {
+      "id": "s1",
+      "name": "Gather the week",
+      "runner": "codex-exec",
+      "prompt": "Collect the last seven days: failed and rejected runs, gate comments, agent demotions, new lessons, capability gaps, the agent lineup and the skills already available.",
+      "input": {},
+      "needs": [],
+      "gate": "none",
+      "autonomy": "assisted",
+      "acceptance": [
+        "out/retro-evidence.json lists the week's failures, rejections, demotions, lessons and gaps."
+      ]
+    },
+    {
+      "id": "s2",
+      "name": "Find what to improve",
+      "runner": "codex-exec",
+      "prompt": "Read the evidence (retro-evidence.json from the previous step). Group repeated causes. Propose at most five concrete improvements, most impactful first. Each: target (skill:<name>, routing:<tier>, workflow:<id>, agent:<name>, new-agent:<name>, new-skill:<name>, lesson or setup), change (exactly what to edit or add), why (which failures, lessons or gaps it answers, quoting them), metric (how next week's retro can tell it worked). Repeated lessons -> fold them into the agent's job or the skill so they stop recurring. Capability gaps -> first check skillsAvailable and the agent lineup for something that already covers it (then propose routing or a new agent that uses that skill); only propose new-skill when nothing fits. Prefer fixing root causes (a missing sign-in, a model the CLI rejects, an unclear acceptance line) over prompt tweaks. Never propose anything that sends, publishes or pays on its own. If the week was clean, say so and propose nothing. Write out/proposals.json as {\"proposals\":[{target,change,why,metric}]} and a short out/retro.md in the conversation language.",
+      "input": {
+        "evidence": "{{steps.s1.out}}"
+      },
+      "needs": [
+        "s1"
+      ],
+      "gate": "none",
+      "autonomy": "assisted",
+      "acceptance": [
+        "out/proposals.json exists; every proposal has target, change, why and metric."
+      ]
+    },
+    {
+      "id": "s3",
+      "name": "Owner decides",
+      "runner": "codex-exec",
+      "prompt": "Read the proposals back; the approved ones become tasks.",
+      "input": {
+        "proposals": "{{steps.s2.out}}"
+      },
+      "needs": [
+        "s2"
+      ],
+      "gate": "approve",
+      "autonomy": "assisted",
+      "acceptance": [
+        "Tasks are created only after the owner approves."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "W9",
+  "name": "agent-task",
+  "version": 1,
+  "description": "One agent does one piece of work for the active company: Octa writes an RCCF brief, the agent drafts, and the owner approves the result before it counts.",
+  "autonomy": "assisted",
+  "acceptance": [
+    "The agent stayed inside its job and met its Definition of Done.",
+    "Nothing was sent, published, paid or deleted; the owner approved or rejected the draft."
+  ],
+  "steps": [
+    {
+      "id": "s1",
+      "name": "RCCF brief",
+      "runner": "codex-exec",
+      "prompt": "Octa writes the Role / Context / Command / Format brief for the agent from its identity, job, Definition of Done, the company's master prompt and the owner's task.",
+      "input": {
+        "request": "{{brief}}"
+      },
+      "needs": [],
+      "gate": "none",
+      "autonomy": "assisted",
+      "acceptance": [
+        "out/brief.md states the role, context, command and format."
+      ]
+    },
+    {
+      "id": "s2",
+      "name": "Agent does the work",
+      "runner": "codex-exec",
+      "prompt": "The agent executes the RCCF brief and drafts its deliverable into out/.",
+      "input": {
+        "brief": "{{steps.s1.out}}"
+      },
+      "needs": [
+        "s1"
+      ],
+      "gate": "approve",
+      "autonomy": "assisted",
+      "acceptance": [
+        "The deliverable meets the agent's Definition of Done and passed the 3-point QA."
+      ]
+    }
+  ]
+}

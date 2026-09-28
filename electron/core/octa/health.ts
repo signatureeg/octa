@@ -17,7 +17,7 @@ import type { AppSettings } from '../../types'
 import type { ResearchBrowserStatus } from './browser'
 import { GeminiClient } from '../../cloud/gemini'
 import { resolveCliBinary } from '../jobs/runner'
-import { phaseModel } from './models'
+import { classifyCliFailure, modelsInUse, phaseModel } from './models'
 
 export const DEFAULT_HEALTH_OCTA_HOME = 'C:\\Octa'
 export const HEALTH_COMMAND_TIMEOUT_MS = 5_000
@@ -37,7 +37,8 @@ export const HEALTH_CHECK_IDS = [
   'vault',
   'octa-home',
   'research-browser',
-  'wake-word'
+  'wake-word',
+  'models'
 ] as const
 
 export type HealthCheckId = (typeof HEALTH_CHECK_IDS)[number]
@@ -143,7 +144,8 @@ const DEFAULT_FIXES: Record<HealthCheckId, string> = {
   vault: 'Choose a readable Obsidian vault folder in Setup. / اختر مجلد Obsidian قابلًا للقراءة في الإعداد.',
   'octa-home': 'Choose a writable folder outside AppData in Setup. / اختر مجلدًا قابلًا للكتابة خارج AppData في الإعداد.',
   'research-browser': 'Open Setup and sign in to the research sites you need. / افتح الإعداد وسجّل الدخول إلى مواقع البحث التي تحتاجها.',
-  'wake-word': 'Restart Octa to restore the bundled wake-word models, or turn the wake word off in Settings and use push-to-talk. / أعد تشغيل أوكتا عشان يرجّع نماذج كلمة التنبيه، أو اقفل كلمة التنبيه من الإعدادات واستخدم زرار الكلام.'
+  'wake-word': 'Restart Octa to restore the bundled wake-word models, or turn the wake word off in Settings and use push-to-talk. / أعد تشغيل أوكتا عشان يرجّع نماذج كلمة التنبيه، أو اقفل كلمة التنبيه من الإعدادات واستخدم زرار الكلام.',
+  models: 'Change the failing phase in Settings → Models, or update and sign in to its CLI. / غيّر موديل الدور اللي فشل من الإعدادات، أو حدّث الأداة وسجّل الدخول.'
 }
 
 function defaultFileSystem(): HealthFileSystem {
@@ -652,7 +654,36 @@ export async function runHealthCheck(
     case 'octa-home': return checkOctaHome(settings, options)
     case 'research-browser': return checkResearchBrowser(settings, options)
     case 'wake-word': return checkWakeWord(settings, options)
+    case 'models': return checkModels(settings, options)
   }
+}
+
+/**
+ * Pings every distinct (CLI, model) pair the tiers use (spec 018), in parallel. The plain
+ * claude/codex checks only prove the CLI's own default model works; this catches a tier whose
+ * model the account cannot reach or the installed CLI is too old for.
+ */
+export async function checkModels(settings: AppSettings, options: HealthOptions = {}): Promise<HealthCheckResult> {
+  const results = await Promise.all(modelsInUse(settings.phaseModels).map(async (entry) => {
+    const pingArgs = entry.cli === 'claude'
+      ? ['-p', '--no-session-persistence', '--output-format', 'text', '--model', entry.model]
+      : ['exec', '--json', '--skip-git-repo-check', '-s', 'read-only', '-m', entry.model]
+    try {
+      const result = await execute(options, commandExecutable(options, entry.cli), pingArgs, {
+        input: 'Reply with exactly: ok\n',
+        timeoutMs: HEALTH_PING_TIMEOUT_MS
+      })
+      if (!commandFailed(result)) return { entry, ok: true as const }
+      const cause = classifyCliFailure(`${result.stdout}\n${result.stderr}`)
+      return { entry, ok: false as const, reason: cause?.message ?? (failureLine(result) || commandFailureDetail(entry.model, result, HEALTH_PING_TIMEOUT_MS)), fix: cause?.fix }
+    } catch (error) {
+      return { entry, ok: false as const, reason: errorMessage(error) }
+    }
+  }))
+  const summary = results.map((item) => `${item.entry.model} (${item.entry.phases.join(', ')}) ${item.ok ? 'ok' : `failed: ${item.reason}`}`).join('; ')
+  const failed = results.find((item) => !item.ok)
+  if (!failed) return success(`${results.length} models reachable: ${summary}.`)
+  return failure(summary, ('fix' in failed && failed.fix) || DEFAULT_FIXES.models)
 }
 
 export async function runHealthChecks(settings: AppSettings, options: HealthOptions = {}): Promise<HealthReport> {

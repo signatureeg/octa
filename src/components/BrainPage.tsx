@@ -4,6 +4,7 @@ import type { BrainProposal, BrainStatus, ProposalStatus } from '../../electron/
 import type { IntakeQuestion, IntakeState } from '../../electron/core/octa/intake'
 import type { Locale, TranslationKey } from '../i18n'
 import { t } from '../i18n'
+import { LearningPanel } from './LearningPanel'
 
 const emptyStatus: BrainStatus = {
   files: [],
@@ -213,6 +214,8 @@ export function BrainPage({ locale }: { locale: Locale }): React.JSX.Element {
           )}
         </section>
       </div>
+
+      <LearningPanel locale={locale} />
     </main>
   )
 }

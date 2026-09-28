@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { LoaderCircle, Mic, Volume2, X } from 'lucide-react'
+import { X } from 'lucide-react'
+import { OctaFace } from '../components/OctaFace'
 import type { VoiceState } from '../../electron/types'
 import type { Locale, TranslationKey } from '../i18n'
 import { applyLocale, t } from '../i18n'
@@ -30,7 +31,6 @@ export function Overlay(): React.JSX.Element {
     error: 'voiceError'
   }
   const visible = state.phase !== 'idle'
-  const Icon = state.phase === 'speaking' ? Volume2 : state.phase === 'thinking' ? LoaderCircle : Mic
 
   return (
     <AnimatePresence>
@@ -41,7 +41,7 @@ export function Overlay(): React.JSX.Element {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 8, scale: 0.98 }}
         >
-          <span className="voice-overlay-icon"><Icon className={state.phase === 'thinking' ? 'spin' : ''} size={15} /></span>
+          <span className="voice-overlay-face" aria-hidden="true"><OctaFace phase={state.phase} size={56} simulate /></span>
           <div className="voice-overlay-copy">
             <strong>{t(labels[state.phase], locale)}</strong>
             <span dir="auto">{state.transcript || state.error || t('voiceReady', locale)}</span>

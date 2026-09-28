@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import {
   buildClaudePlanArgv,
   buildClaudeSkillArgv,
+  HEADLESS_BLOCKED_TOOLS,
   buildCodexCriticArgv,
   buildCodexExecArgv,
   buildCodexReviewArgv,
@@ -76,7 +77,7 @@ describe('runner argv contracts', () => {
   it('builds the documented Claude skill argv', () => {
     expect(buildClaudeSkillArgv({ workspace, skillPath: skill, allowedTools: ['Read'] }, 'led')).toEqual([
       '-p', '--output-format', 'stream-json', '--verbose', '--add-dir', skill, '--add-dir', workspace,
-      '--append-system-prompt-file', join(skill, 'SKILL.md'), '--allowedTools', 'Read', '--model', 'claude-sonnet-5'
+      '--append-system-prompt-file', join(skill, 'SKILL.md'), '--allowedTools', 'Read', '--disallowedTools', ...HEADLESS_BLOCKED_TOOLS, '--model', 'claude-sonnet-5'
     ])
   })
 

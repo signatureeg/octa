@@ -3,7 +3,7 @@ import { normalizePhaseModels } from '../core/octa/models'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DATABASE_BUSY_TIMEOUT_MS } from './busy-timeout'
-import { DEFAULT_SETTINGS, type AppSettings } from '../types'
+import { DEFAULT_SETTINGS, VOICE_NAMES, type AppSettings, type VoiceName } from '../types'
 
 const SETTING_KEYS: readonly (keyof AppSettings)[] = [
   'geminiApiKey',
@@ -33,7 +33,9 @@ const SETTING_KEYS: readonly (keyof AppSettings)[] = [
   'triggerType',
   'mouseButton',
   'wakeGreeting',
-  'phaseModels'
+  'phaseModels',
+  'voiceName',
+  'uiScale'
 ]
 
 const SETTING_KEY_SET = new Set<string>(SETTING_KEYS)
@@ -147,7 +149,9 @@ export class SettingsRepository {
       triggerType: stored.triggerType === 'mouse' ? 'mouse' : 'keyboard',
       mouseButton: stored.mouseButton === 3 || stored.mouseButton === 5 ? stored.mouseButton : 4,
       wakeGreeting: stringSetting(stored.wakeGreeting, 512, DEFAULT_SETTINGS.wakeGreeting),
-      phaseModels: normalizePhaseModels(stored.phaseModels)
+      phaseModels: normalizePhaseModels(stored.phaseModels),
+      voiceName: (VOICE_NAMES as readonly unknown[]).includes(stored.voiceName) ? stored.voiceName as VoiceName : DEFAULT_SETTINGS.voiceName,
+      uiScale: typeof stored.uiScale === 'number' && stored.uiScale >= 0.8 && stored.uiScale <= 1.6 ? stored.uiScale : DEFAULT_SETTINGS.uiScale
     }
   }
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Bot,
   ArrowLeft,
   Check,
   ChevronDown,
@@ -12,7 +13,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import type { NewTask, TaskRecord, TaskStatus } from '../../electron/types'
+import type { AgentRecord, NewTask, TaskRecord, TaskStatus } from '../../electron/types'
 import type { Locale, TranslationKey } from '../i18n'
 import { t } from '../i18n'
 
@@ -201,7 +202,9 @@ function TaskCard({
   onToggleTimer,
   onComplete,
   onDelete,
-  onEdit
+  onEdit,
+  agents,
+  onDelegate
 }: {
   task: TaskRecord
   now: number
@@ -210,8 +213,11 @@ function TaskCard({
   onComplete: () => void
   onDelete: () => void
   onEdit: (patch: Partial<NewTask>) => void
+  agents: AgentRecord[]
+  onDelegate: (agentId: string) => void
 }): React.JSX.Element {
   const [editing, setEditing] = useState(false)
+  const [delegating, setDelegating] = useState(false)
   const [draft, setDraft] = useState(task.title)
   const due = dueLabel(task.dueAt, now, locale)
   const running = task.runningSince !== null
@@ -289,10 +295,37 @@ function TaskCard({
             {running ? <Pause size={14} /> : <Play size={14} />}
           </button>
         )}
+        {task.status !== 'done' && agents.length > 0 && (
+          <button
+            aria-expanded={delegating}
+            aria-label={label('taskDelegate', locale)}
+            onClick={() => setDelegating((value) => !value)}
+            title={label('taskDelegate', locale)}
+            type="button"
+          >
+            <Bot size={14} aria-hidden="true" />
+          </button>
+        )}
         <button onClick={onDelete} aria-label={label('taskDelete', locale)} title={label('taskDelete', locale)} type="button">
           <Trash2 size={14} aria-hidden="true" />
         </button>
       </div>
+      {delegating && (
+        <select
+          aria-label={label('taskDelegate', locale)}
+          autoFocus
+          className="task-delegate"
+          defaultValue=""
+          onChange={(event) => {
+            if (!event.target.value) return
+            setDelegating(false)
+            onDelegate(event.target.value)
+          }}
+        >
+          <option value="">{label('taskDelegatePick', locale)}</option>
+          {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+        </select>
+      )}
     </article>
   )
 }
@@ -329,6 +362,12 @@ export function TasksPage({ onBack, locale }: { onBack: () => void; locale: Loca
     timer.current = setInterval(() => setNow(Date.now()), 1_000)
     return () => clearInterval(timer.current)
   }, [hasRunning])
+
+  const [agents, setAgents] = useState<AgentRecord[]>([])
+  useEffect(() => {
+    if (!window.octa?.agents) return
+    void window.octa.agents.list().then((list) => setAgents(list.filter((agent) => agent.status === 'active'))).catch(() => setAgents([]))
+  }, [])
 
   const run = async (action: Promise<unknown>): Promise<void> => {
     try {
@@ -440,6 +479,8 @@ export function TasksPage({ onBack, locale }: { onBack: () => void; locale: Loca
                   }
                   onDelete={() => void run(window.octa.tasks.remove(task.id))}
                   onEdit={(patch) => void run(window.octa.tasks.update(task.id, patch))}
+                  agents={agents}
+                  onDelegate={(agentId) => void run(window.octa.agents.run(agentId, '', task.id))}
                 />
               ))}
               {column.items.length === 0 && <p className="task-column-empty">{label('taskNothingHere', locale)}</p>}

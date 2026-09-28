@@ -48,6 +48,13 @@ import { DocumentRepository } from './db/documents'
 import { OperationsRepository } from './db/operations'
 import { SocialQueueRepository } from './db/social-queue'
 import { TaskRepository } from './db/tasks'
+import { AgentsRepository, type AgentUpdate } from './db/agents'
+import { RequestsRepository, type RequestSource, type RequestStepPreview, type WorkRequest } from './db/requests'
+import { appendLearning, learningPath, lessonFromFeedback, readLearning, removeLearning, renderMemory, type LearningEntry, type LearningLog } from './core/octa/learning'
+import { agentPrompt } from './core/octa/agents'
+import { agentJobSpec } from './core/octa/agent-runs'
+import { DEFAULT_COMPANY, isCompanySlug, listCompanies, readCompany, type CompanyInfo } from './core/octa/companies'
+import { executeVoiceTool, VOICE_MANAGER_INSTRUCTION, VOICE_TOOL_DECLARATIONS as COMPANY_VOICE_TOOL_DECLARATIONS } from './core/octa/voice-tools'
 import { JobRunner, type JobSpec } from './core/jobs/runner'
 import { ConversationRepository } from './core/voice/conversation'
 import { WorkflowGateRegistry } from './core/voice/workflow-gate'
@@ -79,16 +86,18 @@ import type {
   VoiceAudioEvent,
   VoiceState,
   VoiceTranscriptEvent,
-  UpdateProgress
-} from './types'
+  UpdateProgress, AgentRecord, AgentRunRecord, AgentTrustStage, AgentOutcome } from './types'
 import { voiceAudioEvent } from './core/dictation'
 import {
   RecurringScheduler,
   WorkflowRunner,
   seedRecurringJobs,
   type WorkflowGateActionRequest,
+  type WorkflowStepExecution,
+  type WorkflowStepRunRequest,
   type WorkflowStartRequest,
-  type WorkflowStartResponse
+  type WorkflowStartResponse,
+  nextRecurringRun
 } from './core/octa/workflows'
 import { createLaunchWorkflowHandlers } from './core/octa/launch-handlers'
 
@@ -113,6 +122,8 @@ let lastUpdateCheck: UpdateCheckResult | null = null
 let autoUpdateError: string | null = null
 let jobsRepository: JobsRepository | undefined
 let tasksRepository: TaskRepository | undefined
+let agentsRepository: AgentsRepository | undefined
+let requestsRepository: RequestsRepository | undefined
 let operationsRepository: OperationsRepository | undefined
 let documentsRepository: DocumentRepository | undefined
 let socialQueueRepository: SocialQueueRepository | undefined
@@ -191,10 +202,10 @@ function outputFilePath(value: unknown): string {
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1_180,
-    height: 780,
-    minWidth: 900,
-    minHeight: 620,
+    width: 1_360,
+    height: 900,
+    minWidth: 960,
+    minHeight: 640,
     title: 'Octa',
     icon: join(app.getAppPath(), 'installer', 'icon.ico'),
     // macOS-style chrome: no native frame; the renderer draws rounded corners, padding and traffic lights.
@@ -220,8 +231,15 @@ function createWindow(): BrowserWindow {
   window.on('unmaximize', emitWindowState)
   window.on('focus', emitWindowState)
   window.on('blur', emitWindowState)
+  // Bigger, clearer interface: the whole UI scales with Settings → Interface size.
+  window.webContents.on('did-finish-load', () => applyUiScale(window))
   loadRenderer(window)
   return window
+}
+
+function applyUiScale(window: BrowserWindow | undefined = mainWindow): void {
+  if (!window || window.isDestroyed()) return
+  window.webContents.setZoomFactor(repository?.getSettings().uiScale ?? 1.2)
 }
 
 function createOverlayWindow(): BrowserWindow {
@@ -350,6 +368,266 @@ function requirePlanner(): Planner {
 function requireBuildManager(): BuildManager {
   if (!buildManager) throw new Error('Build pipeline is unavailable.')
   return buildManager
+}
+
+/**
+ * Lessons, gaps and owner memory are written to the vault (the brain's source of truth).
+ * <octaHome>/knowledge is a one-way mirror of the vault that deletes anything not in the vault,
+ * so writing there would be wiped on the next sync; the mirror picks the files up from the vault.
+ */
+function learningRoot(): string {
+  const vault = repository?.getSettings().vaultPath.trim()
+  return vault ? join(vault, 'knowledge') : knowledgeRoot()
+}
+
+function learningFile(log: LearningLog, company = activeCompany()): string {
+  return learningPath(learningRoot(), log, company)
+}
+
+function learningState(): { lessons: LearningEntry[]; gaps: LearningEntry[]; memory: LearningEntry[]; company: string } {
+  const company = activeCompany()
+  return {
+    company,
+    lessons: readLearning(learningFile('lessons', company)).reverse(),
+    gaps: readLearning(learningFile('gaps', company)).reverse(),
+    memory: readLearning(learningFile('memory')).reverse()
+  }
+}
+
+function broadcastLearning(): void {
+  try {
+    broadcast('learning:changed', learningState())
+  } catch {
+    // The brain folder may be unavailable; the page reloads on open.
+  }
+}
+
+/** The owner's "no" or "change this" becomes a lesson every agent reads next time. */
+function recordLesson(kind: 'rejected' | 'revise' | 'skipped' | 'comment', comment: string | undefined, who?: string | null, about?: string, company = activeCompany()): void {
+  const lesson = lessonFromFeedback({ kind, comment: comment ?? '', who, about })
+  if (!lesson) return
+  try {
+    appendLearning(learningFile('lessons', company), 'lessons', lesson.tag, lesson.text)
+    broadcastLearning()
+  } catch (error) {
+    console.warn('[octa] Could not record a lesson:', error)
+  }
+}
+
+/** What Octa remembers about the owner, appended to each new voice session. */
+function voiceMemory(): string {
+  try {
+    const memory = renderMemory(readLearning(learningFile('memory')))
+    return memory ? `\nWhat you remember about Bedo (follow it; he can change it any time):\n${memory}` : ''
+  } catch {
+    return ''
+  }
+}
+
+const COMPANY_VOICE_TOOL_NAMES = new Set<string>(COMPANY_VOICE_TOOL_DECLARATIONS.map((tool) => tool.name))
+
+/** Octa's company tools: agents, workflow-first requests, companies and memory (core/octa/voice-tools). */
+function companyVoiceTool(name: string, args: Record<string, unknown>): Record<string, unknown> {
+  const result = executeVoiceTool(name, args, {
+    listAgents,
+    agentRuns: (agentId) => requireAgents().runs(agentId),
+    runStatus: (runId) => workflows?.getRun(runId)?.status ?? jobsRepository?.getJob(runId)?.status,
+    proposeRequest: (agentId, task, taskId) => proposeAgentRequest(agentId, task, taskId, 'voice'),
+    startRequest: (requestId) => startRequest(requestId),
+    listRequests: () => requireRequests().list('proposed'),
+    createTask: (title, notes) => requireTasks().create({ title, notes, source: 'voice' }),
+    listCompanies: () => listCompanyState(),
+    setCompany: (slug) => setActiveCompany(slug),
+    remember: (text, kind) => {
+      const entry = appendLearning(learningFile('memory'), 'memory', ['preference', 'decision', 'fact'].includes(kind) ? kind : 'preference', text)
+      broadcastLearning()
+      return entry
+    },
+    noteGap: (what) => {
+      const entry = appendLearning(learningFile('gaps'), 'gaps', 'voice', what)
+      broadcastLearning()
+      return entry
+    }
+  })
+  broadcast('voice:message', `[${name}] ${JSON.stringify(result).slice(0, 300)}`)
+  return result
+}
+
+function recordGateLesson(value: unknown, kind: 'rejected' | 'comment'): void {
+  const request = value && typeof value === 'object' ? value as { runId?: unknown; reason?: unknown; comment?: unknown } : {}
+  const comment = typeof request.reason === 'string' && request.reason.trim() ? request.reason : typeof request.comment === 'string' ? request.comment : ''
+  if (!comment.trim() || typeof request.runId !== 'string') return
+  const run = workflows?.getRun(request.runId)
+  const brief = run?.brief && typeof run.brief === 'object' ? run.brief as Record<string, unknown> : {}
+  const agent = typeof brief.agentId === 'string' ? agentsRepository?.get(brief.agentId)?.name : undefined
+  const company = typeof brief.company === 'string' && isCompanySlug(brief.company) ? brief.company : activeCompany()
+  recordLesson(kind, comment, agent ?? null, run?.workflow, company)
+}
+
+function requireRequests(): RequestsRepository {
+  if (!requestsRepository) throw new Error('Request storage is unavailable.')
+  return requestsRepository
+}
+
+function requireAgents(): AgentsRepository {
+  if (!agentsRepository) throw new Error('Agent storage is unavailable.')
+  return agentsRepository
+}
+
+/** The company Octa is working for now (Settings value, default Signature). */
+function activeCompany(): string {
+  const stored = repository?.getValue<string>('activeCompany')
+  return isCompanySlug(stored) ? stored : DEFAULT_COMPANY
+}
+
+function knowledgeRoot(): string {
+  return join(repository?.getSettings().octaHomePath || octaHome, 'knowledge')
+}
+
+function listCompanyState(): { companies: CompanyInfo[]; active: string } {
+  return { companies: listCompanies(knowledgeRoot()), active: activeCompany() }
+}
+
+function setActiveCompany(slug: string): { companies: CompanyInfo[]; active: string } {
+  if (!readCompany(knowledgeRoot(), slug)) throw new Error(`Company "${slug}" has no folder under knowledge/companies.`)
+  repository?.setValue('activeCompany', slug)
+  broadcast('companies:changed', listCompanyState())
+  return listCompanyState()
+}
+
+/** Delegated tasks follow their agent run: clean -> done, rejected/failed -> back to todo with the reason. */
+function onAgentRunSettled(run: AgentRunRecord, outcome: AgentOutcome, agent: AgentRecord): void {
+  if (!run.taskId || !tasksRepository) return
+  const task = tasksRepository.get(run.taskId)
+  if (!task) return
+  const line = outcome.result === 'clean'
+    ? `✓ ${agent.name} finished and you approved it (run ${run.jobId}).`
+    : `✗ ${agent.name} ${outcome.result}: ${outcome.reason ?? ''} (run ${run.jobId})`
+  tasksRepository.update(task.id, {
+    status: outcome.result === 'clean' ? 'done' : 'todo',
+    notes: [task.notes, line].filter(Boolean).join('\n')
+  })
+}
+
+/** Settles finished agent runs onto the trust ladder, then lists (spec 018). */
+function listAgents(): AgentRecord[] {
+  const agents = requireAgents()
+  agents.syncOutcomes((runId) => agentRunRecord(runId), new Date(), onAgentRunSettled)
+  syncAgentSchedules()
+  return agents.list()
+}
+
+/** One recurring job per scheduled, active agent (`agent:<id>`); disabled when paused or unscheduled. */
+function syncAgentSchedules(): void {
+  if (!agentsRepository || !jobsRepository) return
+  for (const agent of agentsRepository.list()) {
+    const id = `agent-${agent.id}`
+    const existing = jobsRepository.getRecurringJob(id)
+    const wanted = Boolean(agent.schedule) && agent.status === 'active'
+    if (!wanted && !existing) continue
+    if (!wanted) {
+      if (existing?.enabled) jobsRepository.saveRecurringJob({ ...existing, enabled: false })
+      continue
+    }
+    if (existing?.enabled && existing.every === agent.schedule) continue
+    jobsRepository.saveRecurringJob({
+      id,
+      name: `Agent: ${agent.name}`,
+      workflow: `agent:${agent.id}`,
+      every: agent.schedule!,
+      nextRunAt: existing && existing.every === agent.schedule && existing.nextRunAt ? existing.nextRunAt : nextRecurringRun(agent.schedule!).toISOString(),
+      lastRunAt: existing?.lastRunAt ?? null,
+      autonomy: 'assisted',
+      enabled: true,
+      input: {}
+    })
+  }
+}
+
+/** Starts one run of an agent: its tier, a scoped prompt, and the gate its trust stage allows. */
+/** W9 preview shown before the owner starts an agent request. */
+function agentRequestSteps(agent: AgentRecord): RequestStepPreview[] {
+  return [
+    { id: 's1', name: 'RCCF brief', who: 'Octa', gate: 'none' },
+    { id: 's2', name: agent.name, who: agent.tier, gate: 'approve' }
+  ]
+}
+
+/**
+ * Workflow-first: asking an agent for work only PROPOSES a W9 request. Nothing runs until the owner
+ * starts it (startRequest). Delegated tasks carry their task id so the task follows the run.
+ */
+function proposeAgentRequest(id: string, task = '', taskId?: string, source: RequestSource = 'app'): WorkRequest {
+  const agent = requireAgents().get(String(id))
+  if (!agent) throw new Error('Agent not found.')
+  if (agent.status === 'paused') throw new Error('This agent is paused. Resume it before asking it for work.')
+  const delegated = taskId ? tasksRepository?.get(taskId) : undefined
+  const brief = delegated ? [delegated.title, delegated.notes].filter(Boolean).join('\n\n') : task.trim()
+  const created = requireRequests().create({
+    title: brief ? `${agent.name}: ${brief.split('\n')[0].slice(0, 160)}` : `${agent.name}: standing job`,
+    company: activeCompany(),
+    workflowId: 'W9',
+    agentId: agent.id,
+    agentName: agent.name,
+    tier: agent.tier,
+    task: brief,
+    taskId: delegated?.id ?? null,
+    source,
+    steps: agentRequestSteps(agent)
+  })
+  broadcast('requests:changed', requireRequests().list('proposed'))
+  return created
+}
+
+/** Starts an approved request. Only a proposed request starts, once. */
+function startRequest(requestId: string): WorkRequest {
+  if (!workflows) throw new Error('Workflows are unavailable.')
+  const request = requireRequests().get(String(requestId))
+  if (!request) throw new Error('Request not found.')
+  if (request.status !== 'proposed') throw new Error('This request was already started or cancelled.')
+  const brief = { requestId: request.id, agentId: request.agentId, task: request.task, company: request.company, taskId: request.taskId, text: request.title }
+  const handle = workflows.start(request.workflowId, brief, { autonomy: 'assisted' })
+  void handle.promise.catch((error: unknown) => console.error('[requests] workflow failed:', error instanceof Error ? error.message : error))
+  const started = requireRequests().markStarted(request.id, handle.runId)
+  if (request.agentId) requireAgents().recordRun(request.agentId, handle.runId, new Date(), request.taskId ?? undefined)
+  const delegated = request.taskId ? tasksRepository?.get(request.taskId) : undefined
+  if (delegated && tasksRepository) tasksRepository.update(delegated.id, { status: 'doing', notes: [delegated.notes, `→ ${request.agentName ?? 'Agent'} started (run ${handle.runId})`].filter(Boolean).join('\n') })
+  broadcast('requests:changed', requireRequests().list('proposed'))
+  return started
+}
+
+/** W9 step s2: one agent job on the RCCF brief; its draft then waits at the W9 approve gate. */
+async function runAgentJob(input: { agent: AgentRecord; brief: string; company: string; request: WorkflowStepRunRequest }): Promise<WorkflowStepExecution> {
+  if (!jobRunner) throw new Error('Job runner is unavailable.')
+  const { agent, brief, company, request } = input
+  const handle = jobRunner.startJob(agentJobSpec(agent, brief, company, {
+    id: request.jobId,
+    workflowRunId: request.runId,
+    stepId: request.step.id,
+    language: request.language
+  }))
+  const result = await handle.promise
+  const files = (result.outputs ?? []).map((item) => item.path).filter(Boolean)
+  return {
+    status: result.status,
+    output: result,
+    result,
+    outputs: result.outputs,
+    folder: handle.folder,
+    jobId: handle.id,
+    notes: result.notes,
+    payload: [`${agent.name} (${company})`, result.notes ?? '', files.length ? `Files: ${files.map((file) => join(handle.folder, file)).join(', ')}` : ''].filter(Boolean).join('\n')
+  } as WorkflowStepExecution
+}
+
+/** Agent runs are W9 workflow runs; map the run to what the trust ladder needs. */
+function agentRunRecord(runId: string): Pick<JobRecord, 'status' | 'gate' | 'gateDecision' | 'gateComments' | 'error'> | null {
+  const run = workflows?.getRun(runId)
+  if (!run) return jobsRepository?.getJob(runId) ?? null
+  const gate = run.steps.find((step) => step.id === 's2')?.gate
+  const decision = gate?.status === 'approved' ? 'approved' : gate?.status === 'rejected' ? 'rejected' : null
+  const status: JobRecord['status'] = run.status === 'ok' ? 'ok' : run.status === 'failed' ? 'failed' : run.status === 'cancelled' ? 'cancelled' : run.status === 'stale' ? 'stale' : 'running'
+  return { status, gate: 'approve', gateDecision: decision, gateComments: gate?.comments ?? null, error: run.error ?? null }
 }
 
 function requireTasks(): TaskRepository {
@@ -763,6 +1041,7 @@ function registerIpc(): void {
       await configureBrain(next)
     }
     if (update.skillsLibraryPath !== undefined) skillsRegistry?.reload()
+    if (update.uiScale !== undefined) applyUiScale()
     if (triggerManager && Object.keys(normalized).some((key) =>
       key === 'pushToTalkEnabled' || key === 'pushToTalkKey' || key === 'hotkey' ||
       key === 'triggerType' || key === 'mouseButton'
@@ -1120,6 +1399,44 @@ function registerIpc(): void {
     shell.openPath(outputFilePath(path))
   )
 
+  ipcMain.handle('companies:list', () => listCompanyState())
+  ipcMain.handle('companies:setActive', (_event, slug: string) => setActiveCompany(String(slug)))
+  ipcMain.handle('agents:list', (): AgentRecord[] => listAgents())
+  ipcMain.handle('agents:runs', (_event, id: string): AgentRunRecord[] => {
+    listAgents()
+    return requireAgents().runs(String(id))
+  })
+  ipcMain.handle('agents:update', (_event, id: string, update: AgentUpdate): AgentRecord => {
+    const updated = requireAgents().update(String(id), update ?? {})
+    syncAgentSchedules()
+    return updated
+  })
+  ipcMain.handle('agents:remove', (_event, id: string): boolean => {
+    const removed = requireAgents().remove(String(id))
+    jobsRepository?.deleteRecurringJob(`agent-${String(id)}`)
+    return removed
+  })
+  ipcMain.handle('agents:setTrust', (_event, id: string, stage: AgentTrustStage): AgentRecord => requireAgents().setTrustStage(String(id), stage))
+  ipcMain.handle('agents:approvePromotion', (_event, id: string): AgentRecord => requireAgents().approvePromotion(String(id)))
+  ipcMain.handle('agents:dismissPromotion', (_event, id: string): AgentRecord => requireAgents().dismissPromotion(String(id)))
+  ipcMain.handle('agents:run', (_event, id: string, task?: string, taskId?: string): WorkRequest =>
+    proposeAgentRequest(String(id), typeof task === 'string' ? task : '', typeof taskId === 'string' && taskId ? taskId : undefined, taskId ? 'task' : 'app')
+  )
+  ipcMain.handle('requests:list', (_event, status?: string): WorkRequest[] =>
+    requireRequests().list(status === 'proposed' || status === 'started' || status === 'cancelled' ? status : undefined)
+  )
+  ipcMain.handle('requests:start', (_event, id: string): WorkRequest => startRequest(String(id)))
+  ipcMain.handle('requests:cancel', (_event, id: string): WorkRequest => {
+    const cancelled = requireRequests().cancel(String(id))
+    broadcast('requests:changed', requireRequests().list('proposed'))
+    return cancelled
+  })
+  ipcMain.handle('agents:create', (_event, spec: unknown): AgentRecord => {
+    const created = requireAgents().create(spec, 'owner')
+    syncAgentSchedules()
+    return created
+  })
+
   ipcMain.handle('jobs:start', (_event, spec: JobSpec): JobStartResponse => {
     if (!jobRunner) throw new Error('Job runner is unavailable.')
     const handle = jobRunner.startJob(spec)
@@ -1185,13 +1502,32 @@ function registerIpc(): void {
     requireWorkflows().approveGate(workflowGateRequest(value))
   )
 
-  ipcMain.handle('workflows:gate:reject', (_event, value: unknown) =>
-    requireWorkflows().rejectGate(workflowGateRequest(value))
-  )
+  ipcMain.handle('workflows:gate:reject', async (_event, value: unknown) => {
+    const run = await requireWorkflows().rejectGate(workflowGateRequest(value))
+    recordGateLesson(value, 'rejected')
+    return run
+  })
 
-  ipcMain.handle('workflows:gate:comment', (_event, value: unknown) =>
-    requireWorkflows().commentGate(workflowGateRequest(value))
-  )
+  ipcMain.handle('workflows:gate:comment', async (_event, value: unknown) => {
+    const run = await requireWorkflows().commentGate(workflowGateRequest(value))
+    recordGateLesson(value, 'comment')
+    return run
+  })
+
+  ipcMain.handle('learning:list', () => learningState())
+  ipcMain.handle('learning:remove', (_event, log: string, id: string) => {
+    if (log !== 'lessons' && log !== 'gaps' && log !== 'memory') throw new Error('Unknown learning log.')
+    removeLearning(learningFile(log), log, id)
+    broadcastLearning()
+    return learningState()
+  })
+  ipcMain.handle('learning:add', (_event, log: string, tag: string, text: string) => {
+    if (log !== 'lessons' && log !== 'gaps' && log !== 'memory') throw new Error('Unknown learning log.')
+    appendLearning(learningFile(log), log, tag || 'note', text)
+    broadcastLearning()
+    return learningState()
+  })
+
 
   ipcMain.handle('workflows:save', (_event, value: unknown) => {
     if (!value || typeof value !== 'object') throw new Error('A workflow name and plan are required.')
@@ -1325,6 +1661,8 @@ async function start(): Promise<void> {
   jobsRepository = new JobsRepository(join(octaHome, 'octa.db'))
   const databasePath = join(octaHome, 'octa.db')
   tasksRepository = new TaskRepository(databasePath)
+  agentsRepository = new AgentsRepository(databasePath)
+  requestsRepository = new RequestsRepository(databasePath)
   operationsRepository = new OperationsRepository(databasePath)
   documentsRepository = new DocumentRepository(databasePath)
   socialQueueRepository = new SocialQueueRepository(databasePath)
@@ -1339,6 +1677,7 @@ async function start(): Promise<void> {
   })
   jobRunner = new JobRunner({
     jobs: jobsRepository,
+    getActiveCompany: () => activeCompany(),
     getSettings: () => {
       if (!repository) throw new Error('Settings storage is unavailable.')
       return repository.getSettings()
@@ -1431,12 +1770,13 @@ async function start(): Promise<void> {
         model: settings.geminiLiveModelOverride.trim() || settings.geminiLiveModel.trim() || model || DEFAULT_GEMINI_LIVE_MODEL,
         audioOutput,
         onEvent,
-        systemInstruction: `${OCTA_VOICE_SYSTEM_INSTRUCTION}
-${VOICE_TOOLS_INSTRUCTION}`,
-        functionDeclarations: VOICE_TOOL_DECLARATIONS
+        voiceName: settings.voiceName,
+        // Abdo's planner tools and Octa's company tools (agents, requests, companies, memory) share one session.
+        systemInstruction: `${OCTA_VOICE_SYSTEM_INSTRUCTION}\n${VOICE_TOOLS_INSTRUCTION}\n${VOICE_MANAGER_INSTRUCTION}${voiceMemory()}`,
+        functionDeclarations: [...VOICE_TOOL_DECLARATIONS, ...COMPANY_VOICE_TOOL_DECLARATIONS]
       })
     },
-    onToolCall: (name, args) => voiceTools.call(name, args),
+    onToolCall: async (name, args) => (COMPANY_VOICE_TOOL_NAMES.has(name) ? companyVoiceTool(name, args) : voiceTools.call(name, args)),
     onState: emitVoiceState,
     onTranscript: emitVoiceTranscript,
     onMessage: (message) => broadcast('voice:message', message),
@@ -1492,6 +1832,11 @@ ${VOICE_TOOLS_INSTRUCTION}`,
     buildManager,
     tasks: tasksRepository,
     operations: operationsRepository,
+    agents: agentsRepository,
+    agentJobRunner: (input) => runAgentJob(input),
+    knowledgeRoot: () => learningRoot(),
+    activeCompany: () => activeCompany(),
+    skillsCatalog: () => (skillsRegistry?.listSkills() ?? []).map((skill) => ({ name: skill.name, description: (skill.use || skill.description).slice(0, 160) })),
     documents: documentsRepository,
     jobs: jobsRepository,
     timeTracker,
@@ -1574,9 +1919,23 @@ ${VOICE_TOOLS_INSTRUCTION}`,
   recurringScheduler = new RecurringScheduler({
     jobs: jobsRepository,
     workflows,
+    // A schedule is an approval the owner already gave: propose and start the W9 run together.
+    runAgent: (agentId) => { startRequest(proposeAgentRequest(agentId, '', undefined, 'schedule').id) },
+    // Set by the owner (C:\Octa\octa.cmd automation pause|resume); read on every tick so it applies at once.
+    isPaused: () => repository?.getValue<boolean>('automationPaused') === true,
     onEvent: (message) => console.warn(`[recurring] ${message}`)
   })
+  syncAgentSchedules()
   recurringScheduler.start()
+  // Settle agent runs (trust ladder + delegated tasks) even when the Agents page is closed.
+  const agentSync = setInterval(() => {
+    try {
+      agentsRepository?.syncOutcomes((runId) => agentRunRecord(runId), new Date(), onAgentRunSettled)
+    } catch (error) {
+      console.error('[agents] sync failed:', error instanceof Error ? error.message : error)
+    }
+  }, 60_000)
+  ;(agentSync as unknown as { unref?: () => void }).unref?.()
   void workflows.resumePending()
   registerIpc()
   attachMainWindow(createWindow())

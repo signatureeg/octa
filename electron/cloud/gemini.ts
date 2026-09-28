@@ -554,7 +554,7 @@ export class GeminiClient {
           responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: options.voiceName ?? 'Kore' }
+              prebuiltVoiceConfig: { voiceName: options.voiceName ?? 'Sulafat' }
             }
           },
           temperature: 0,

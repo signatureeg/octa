@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { AppSettings, DocumentBrand, DocumentRecord, InvoiceItem, NewTask } from '../../types'
@@ -15,6 +15,10 @@ import { JobsRepository } from '../../db/jobs'
 import { OperationsRepository } from '../../db/operations'
 import { SocialQueueRepository, type SocialPlatform } from '../../db/social-queue'
 import { TaskRepository } from '../../db/tasks'
+import type { AgentsRepository } from '../../db/agents'
+import { agentPrompt, validateAgentSpec } from './agents'
+import { learningPath, readLearning, type LearningEntry } from './learning'
+import type { AgentRecord } from '../../types'
 import { TimeTracker } from '../time-tracking'
 import { Vault } from '../vault'
 import type {
@@ -58,12 +62,22 @@ export interface LaunchWorkflowDependencies {
   skillRunner?: LaunchSkillRunner
   tasks?: TaskRepository
   operations?: OperationsRepository
+  /** W7 creates an agent here after the owner approves step s4 (spec 018). */
+  agents?: AgentsRepository
+  /** W9 step s2: runs one agent job on the RCCF brief and waits for it. */
+  agentJobRunner?: (input: { agent: AgentRecord; brief: string; company: string; request: WorkflowStepRunRequest }) => Promise<WorkflowStepExecution>
   documents?: DocumentRepository
   jobs?: JobsRepository
   timeTracker?: TimeTracker
   pdfRenderer?: Pick<PdfRenderer, 'render'>
   socialQueue?: SocialQueueRepository
   socialHandoffPath?: string
+  /** W8 reads lessons and gaps from the brain. */
+  knowledgeRoot?: () => string
+  /** The company W8 reviews. */
+  activeCompany?: () => string
+  /** W8 skill scouting: the skills Octa already has (name + one line). */
+  skillsCatalog?: () => Array<{ name: string; description: string }>
   now?: () => Date
 }
 
@@ -695,6 +709,36 @@ async function afterApproval(options: LaunchWorkflowDependencies, request: Workf
     return
   }
 
+  if (request.workflowId === 'W7' && request.stepId === 's4') {
+    if (!options.agents) throw new Error('Agent storage is unavailable.')
+    const checked = validateAgentSpec(stateOutput.agent)
+    if (!checked.valid || !checked.spec) throw new Error(`The approved agent spec is invalid: ${checked.errors.join(' ')}`)
+    const agent = options.agents.create(checked.spec, request.runId)
+    const result = { ...stateOutput, approved: true, agentId: agent.id, trustStage: agent.trustStage }
+    request.state.output = result
+    request.state.result = result
+    writeJson(request.folder, 'out/agent-created.json', result)
+    return
+  }
+
+  if (request.workflowId === 'W8' && request.stepId === 's3') {
+    const proposals = retroProposals(stateOutput)
+    const created = options.tasks
+      ? proposals.map((item) => options.tasks!.create({
+        title: `${item.target ? `[${item.target}] ` : ''}${item.change}`.slice(0, 200),
+        notes: `Why: ${item.why}\nMetric: ${item.metric}\nFrom weekly retro ${request.runId}`,
+        project: 'Octa improvements',
+        source: 'voice'
+      }))
+      : []
+    const knowledgePath = proposals.length ? await saveVault(options, 'Weekly retro', stringValue(stateOutput.readback)) : undefined
+    const result = { ...stateOutput, approved: true, pendingApproval: false, taskIds: created.map((item) => item.id), knowledgePath }
+    request.state.output = result
+    request.state.result = result
+    writeJson(request.folder, 'out/retro-approved.json', result)
+    return
+  }
+
   if (request.workflowId === 'W4' && request.stepId === 's6') {
     const tasks = array(stateOutput.tasks).flatMap((item) => isRecord(item) ? [{
       title: stringValue(item.title),
@@ -709,6 +753,165 @@ async function afterApproval(options: LaunchWorkflowDependencies, request: Workf
     request.state.result = result
     writeJson(request.folder, 'out/decision-approved.json', result)
   }
+}
+
+/** Reads out/<file> written by an earlier step of the same run (newest attempt first), if it exists. */
+function earlierStepJson(options: LaunchWorkflowDependencies, request: WorkflowStepRunRequest, stepId: string, file: string): unknown {
+  const prefix = `${request.runId.trim().replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80)}-${stepId}-a`
+  const jobsRoot = join(options.homePath, 'jobs')
+  const attempts = existsSync(jobsRoot)
+    ? readdirSync(jobsRoot).filter((name) => name.startsWith(prefix)).sort((a, b) => Number(b.slice(prefix.length)) - Number(a.slice(prefix.length)))
+    : []
+  for (const folder of [...attempts.map((name) => join(jobsRoot, name)), request.folder]) {
+    const path = join(folder, 'out', file)
+    if (existsSync(path)) return JSON.parse(readFileSync(path, 'utf8')) as unknown
+  }
+  return undefined
+}
+
+/** Finds the agent.json W7 step s3 wrote: the newest attempt's out/ folder, or JSON in the step input. */
+function findAgentSpec(options: LaunchWorkflowDependencies, request: WorkflowStepRunRequest): unknown {
+  const written = earlierStepJson(options, request, 's3', 'agent.json')
+  if (written !== undefined) return written
+  const input = inputRecord(request)
+  for (const candidate of [input.agent, input.spec]) {
+    if (isRecord(candidate) && candidate.name) return candidate
+    const textValue = typeof candidate === 'string' ? candidate : ''
+    const fenced = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/.exec(textValue)?.[1] ?? (textValue.trim().startsWith('{') ? textValue : '')
+    if (fenced) {
+      try {
+        return JSON.parse(fenced) as unknown
+      } catch {
+        // fall through to the error below
+      }
+    }
+  }
+  return undefined
+}
+
+/** W7 s4: read the agent back before the owner's go. The agent is created in afterApproval, never here. */
+function handleAgentReadback(options: LaunchWorkflowDependencies, request: WorkflowStepRunRequest): WorkflowStepExecution {
+  const raw = findAgentSpec(options, request)
+  const checked = validateAgentSpec(raw)
+  if (!checked.valid || !checked.spec) {
+    return { status: 'failed', output: { errors: checked.errors }, result: { errors: checked.errors }, folder: request.folder, jobId: request.jobId, notes: `No valid out/agent.json from step s3: ${checked.errors.join(' ')}` } as WorkflowStepExecution
+  }
+  const agent = checked.spec
+  const arabic = language(request).startsWith('ar')
+  const readback = arabic
+    ? [`الوكيل: ${agent.name}`, `الشغل: ${agent.scope}`, `يخلص لما: ${agent.definitionOfDone}`, `المهارات: ${agent.skills.join('، ') || '—'}`, `الموديل: ${agent.tier}`, `يبدأ بمستوى ثقة: ${agent.trustStage}`, agent.schedule ? `بيشتغل: ${agent.schedule}` : '', 'وافق عشان أوكتا يسجّل الوكيل ده.'].filter(Boolean).join('\n')
+    : [`Agent: ${agent.name}`, `Job: ${agent.scope}`, `Done when: ${agent.definitionOfDone}`, `Skills: ${agent.skills.join(', ') || '—'}`, `Model tier: ${agent.tier}`, `Starts at trust stage: ${agent.trustStage}`, agent.schedule ? `Runs: ${agent.schedule}` : '', 'Approve to register this agent.'].filter(Boolean).join('\n')
+  const path = writeJson(request.folder, 'out/agent-proposal.json', { agent, readback })
+  return {
+    ...execution(request, { agent, readback, pendingApproval: true }, [output(request.folder, path, 'json', 'Agent proposal')]),
+    payload: readback
+  } as WorkflowStepExecution
+}
+
+/** W9 brief: { agentId, task, company } from the approved request. */
+function agentTaskBrief(options: LaunchWorkflowDependencies, request: WorkflowStepRunRequest): { agent: AgentRecord; task: string; company: string } {
+  const brief = record(request.brief)
+  const agentId = stringValue(brief.agentId)
+  const agent = agentId ? options.agents?.get(agentId) : undefined
+  if (!agent) throw new Error(`W9 needs an existing agent (got "${agentId}").`)
+  return { agent, task: stringValue(brief.task), company: stringValue(brief.company, 'signature') }
+}
+
+/** W9 s1: Octa writes the RCCF brief the agent will work from (no model call). */
+function handleAgentBrief(options: LaunchWorkflowDependencies, request: WorkflowStepRunRequest): WorkflowStepExecution {
+  const { agent, task, company } = agentTaskBrief(options, request)
+  const brief = agentPrompt(agent, task, company)
+  const path = writeText(request.folder, 'out/brief.md', brief)
+  return execution(request, { agentId: agent.id, agent: agent.name, company, brief }, [output(request.folder, path, 'markdown', 'RCCF brief')])
+}
+
+/** W9 s2: the agent does the work; its draft waits at the approve gate. */
+async function handleAgentWork(options: LaunchWorkflowDependencies, request: WorkflowStepRunRequest): Promise<WorkflowStepExecution> {
+  if (!options.agentJobRunner) throw new Error('Agent runs are unavailable.')
+  const { agent, company } = agentTaskBrief(options, request)
+  const fromBrief = record(inputRecord(request).brief)
+  const brief = stringValue(fromBrief.brief) || agentPrompt(agent, agentTaskBrief(options, request).task, company)
+  return options.agentJobRunner({ agent, brief, company, request })
+}
+
+const RETRO_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000
+
+/** W8 s1: the week's failures, rejections and demotions, gathered in-process (no model needed). */
+function handleRetroEvidence(options: LaunchWorkflowDependencies, request: WorkflowStepRunRequest): WorkflowStepExecution {
+  const since = Date.now() - RETRO_WINDOW_MS
+  const inWindow = (value: string | null | undefined): boolean => Boolean(value) && Date.parse(String(value)) >= since
+  const jobs = (options.jobs?.listJobs({ limit: 500 }) ?? []).filter((job) => inWindow(job.startedAt ?? job.finishedAt))
+  const problems = jobs.filter((job) => job.status === 'failed' || job.status === 'needs_input' || /reject/i.test(job.gateDecision ?? ''))
+    .map((job) => ({
+      when: job.startedAt,
+      runner: job.runner,
+      workflow: job.workflow,
+      step: job.stepId,
+      skill: job.skill,
+      status: job.status,
+      error: job.error,
+      gateDecision: job.gateDecision,
+      gateComments: job.gateComments
+    }))
+  const demotions = (options.agents?.list() ?? [])
+    .filter((agent) => agent.lastDemotion && inWindow(agent.lastDemotion.at))
+    .map((agent) => ({ agent: agent.name, ...agent.lastDemotion }))
+  const company = options.activeCompany?.() ?? 'signature'
+  const root = options.knowledgeRoot?.()
+  const entries = (log: 'lessons' | 'gaps'): LearningEntry[] => {
+    if (!root) return []
+    try {
+      return readLearning(learningPath(root, log, company))
+    } catch {
+      return []
+    }
+  }
+  const lessons = entries('lessons').filter((entry) => inWindow(entry.date))
+  const gaps = entries('gaps')
+  const evidence = {
+    window: { from: new Date(since).toISOString(), to: new Date().toISOString() },
+    company,
+    totals: { runs: jobs.length, ok: jobs.filter((job) => job.status === 'ok').length, problems: problems.length, demotions: demotions.length, lessons: lessons.length, gaps: gaps.length },
+    problems,
+    demotions,
+    lessons,
+    gaps,
+    agents: (options.agents?.list() ?? []).map((agent) => ({ name: agent.name, department: agent.department, skills: agent.skills, trust: agent.trustStage })),
+    skillsAvailable: options.skillsCatalog?.() ?? []
+  }
+  const path = writeJson(request.folder, 'out/retro-evidence.json', evidence)
+  return execution(request, evidence, [output(request.folder, path, 'json', 'Retro evidence')])
+}
+
+interface RetroProposal {
+  target: string
+  change: string
+  why: string
+  metric: string
+}
+
+function retroProposals(value: unknown): RetroProposal[] {
+  const list = isRecord(value) && Array.isArray(value.proposals) ? value.proposals : Array.isArray(value) ? value : []
+  return list.flatMap((item) => {
+    if (!isRecord(item)) return []
+    const proposal = { target: stringValue(item.target), change: stringValue(item.change), why: stringValue(item.why), metric: stringValue(item.metric) }
+    return proposal.change ? [proposal] : []
+  }).slice(0, 5)
+}
+
+/** W8 s3: read the proposals back; they become tasks only in afterApproval. */
+function handleRetroReadback(options: LaunchWorkflowDependencies, request: WorkflowStepRunRequest): WorkflowStepExecution {
+  const input = inputRecord(request)
+  const proposals = retroProposals(earlierStepJson(options, request, 's2', 'proposals.json') ?? input.proposals)
+  const arabic = language(request).startsWith('ar')
+  const readback = proposals.length === 0
+    ? (arabic ? 'الأسبوع ده نضيف، مفيش اقتراحات.' : 'A clean week: no proposals.')
+    : proposals.map((item, index) => `${index + 1}. ${item.target ? `[${item.target}] ` : ''}${item.change}\n   ${arabic ? 'ليه' : 'Why'}: ${item.why}\n   ${arabic ? 'هنعرف إزاي' : 'Metric'}: ${item.metric}`).join('\n')
+  const path = writeJson(request.folder, 'out/retro-proposals.json', { proposals, readback })
+  return {
+    ...execution(request, { proposals, readback, pendingApproval: proposals.length > 0 }, [output(request.folder, path, 'json', 'Retro proposals')]),
+    payload: `${readback}\n\n${arabic ? 'وافق عشان تتحول لمهام في صفحة المهام. مفيش حاجة هتتغير لوحدها.' : 'Approve to turn these into tasks on the Tasks page. Nothing changes on its own.'}`
+  } as WorkflowStepExecution
 }
 
 export function createLaunchWorkflowHandler(options: LaunchWorkflowDependencies): WorkflowStepHandler {
@@ -751,6 +954,11 @@ export function createLaunchWorkflowHandler(options: LaunchWorkflowDependencies)
       case 'W5:s2': return handleInvoicePdf(options, request)
       case 'W5:s3': return handleInvoiceSend(options, request)
       case 'W5:s4': return handleInvoiceFollowUps(options, request)
+      case 'W7:s4': return handleAgentReadback(options, request)
+      case 'W8:s1': return handleRetroEvidence(options, request)
+      case 'W8:s3': return handleRetroReadback(options, request)
+      case 'W9:s1': return handleAgentBrief(options, request)
+      case 'W9:s2': return handleAgentWork(options, request)
       default: return undefined
     }
   }

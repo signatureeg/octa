@@ -1,9 +1,10 @@
-import { Brain, BriefcaseBusiness, Cloud, GitBranch, Hammer, HeartPulse, Languages, Library, ListTodo, Settings2, Sparkles, Users, Workflow } from 'lucide-react'
+import { Bot, Brain, BriefcaseBusiness, Cloud, GitBranch, Hammer, HeartPulse, Languages, Library, ListTodo, Settings2, Sparkles, Users, Workflow } from 'lucide-react'
 import type { Locale, TranslationKey } from '../i18n'
 import { t } from '../i18n'
 import { OctaMark } from './OctaMark'
+import { CompanySwitcher } from './CompanySwitcher'
 
-export type Page = 'octa' | 'jobs' | 'tasks' | 'clients' | 'workflows' | 'skills' | 'brain' | 'map' | 'builds' | 'health' | 'settings'
+export type Page = 'octa' | 'jobs' | 'tasks' | 'clients' | 'workflows' | 'agents' | 'skills' | 'brain' | 'map' | 'builds' | 'health' | 'settings'
 
 export function Sidebar({
   page,
@@ -26,6 +27,7 @@ export function Sidebar({
           <span>{label('brandSubtitle')}</span>
         </div>
       </div>
+      <CompanySwitcher locale={locale} />
 
       <nav aria-label={label('primaryNavigation')}>
         <button
@@ -72,6 +74,15 @@ export function Sidebar({
         >
           <Workflow size={18} aria-hidden="true" />
           <span>{label('workflows')}</span>
+        </button>
+        <button
+          aria-current={page === 'agents' ? 'page' : undefined}
+          className={`nav-item ${page === 'agents' ? 'active' : ''}`}
+          onClick={() => onChange('agents')}
+          type="button"
+        >
+          <Bot size={18} aria-hidden="true" />
+          <span>{label('agentsNav')}</span>
         </button>
         <button
           aria-current={page === 'skills' ? 'page' : undefined}

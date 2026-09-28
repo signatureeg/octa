@@ -14,6 +14,9 @@ import W3 from './workflows/W3-market-project.json'
 import W4 from './workflows/W4-think-project.json'
 import W5 from './workflows/W5-invoice.json'
 import W6 from './workflows/W6-research.json'
+import W7 from './workflows/W7-scope-new-agent.json'
+import W8 from './workflows/W8-weekly-retro.json'
+import W9 from './workflows/W9-agent-task.json'
 import {
   JobRunner,
   getJobRunner,
@@ -55,6 +58,8 @@ import type {
   JobRunnerName,
   JobStatus
 } from '../../types'
+import { isModelTier, MODEL_TIERS } from './models'
+import type { ModelTier } from '../../types'
 
 export type WorkflowGate = 'none' | 'review' | 'approve'
 export type WorkflowAutonomy = JobAutonomy
@@ -79,6 +84,8 @@ export interface WorkflowStepDefinition {
   timeBudgetMs?: number
   inputTokenBudget?: number
   maxRetries?: number
+  /** Model tier for this step (spec 018). */
+  tier?: ModelTier
 }
 
 export interface WorkflowDefinition {
@@ -126,7 +133,8 @@ export const WORKFLOW_SCHEMA = {
           gatePayload: {},
           timeBudgetMs: { type: 'integer', minimum: 1 },
           inputTokenBudget: { type: 'integer', minimum: 1 },
-          maxRetries: { type: 'integer', minimum: 0, maximum: 2 }
+          maxRetries: { type: 'integer', minimum: 0, maximum: 2 },
+          tier: { type: 'string', enum: [...MODEL_TIERS] }
         },
         required: ['id', 'needs', 'runner', 'gate', 'autonomy', 'acceptance']
       }
@@ -392,7 +400,7 @@ const TERMINAL_STEP_STATUSES: ReadonlySet<WorkflowStepStatus> = new Set(['comple
 const KNOWN_RUNNERS = new Set(['claude-plan', 'claude-skill', 'codex-exec', 'codex-scout', 'codex-critic', 'codex-review', 'gemini-inline', 'octa-code'])
 const GATE_EXPIRY_MS = 24 * 60 * 60 * 1_000
 
-export const LAUNCH_WORKFLOWS: readonly WorkflowDefinition[] = [W1, W2, W3, W4, W5, W6] as WorkflowDefinition[]
+export const LAUNCH_WORKFLOWS: readonly WorkflowDefinition[] = [W1, W2, W3, W4, W5, W6, W7, W8, W9] as WorkflowDefinition[]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -433,7 +441,8 @@ function normalizeStep(value: Record<string, unknown>, index: number, workflowAu
     ...(value.gatePayload !== undefined ? { gatePayload: value.gatePayload } : {}),
     ...(typeof value.timeBudgetMs === 'number' && Number.isFinite(value.timeBudgetMs) ? { timeBudgetMs: Math.max(1, Math.trunc(value.timeBudgetMs)) } : {}),
     ...(typeof value.inputTokenBudget === 'number' && Number.isFinite(value.inputTokenBudget) ? { inputTokenBudget: Math.max(1, Math.trunc(value.inputTokenBudget)) } : {}),
-    ...(typeof value.maxRetries === 'number' && Number.isFinite(value.maxRetries) ? { maxRetries: Math.max(0, Math.min(2, Math.trunc(value.maxRetries))) } : {})
+    ...(typeof value.maxRetries === 'number' && Number.isFinite(value.maxRetries) ? { maxRetries: Math.max(0, Math.min(2, Math.trunc(value.maxRetries))) } : {}),
+    ...(isModelTier(value.tier) ? { tier: value.tier } : {})
   }
 }
 
@@ -494,6 +503,7 @@ export function validateWorkflow(value: unknown): WorkflowValidationResult {
     const gate = validGate(raw.gate)
     if (!gate) errors.push(`steps[${index}].gate must be none, review, or approve.`)
     if (raw.autonomy !== undefined && !['led', 'assisted', 'auto'].includes(String(raw.autonomy))) errors.push(`steps[${index}].autonomy is invalid.`)
+    if (raw.tier !== undefined && !isModelTier(raw.tier)) errors.push(`steps[${index}].tier must be one of ${MODEL_TIERS.join(', ')}.`)
     errors.push(...arrayOfStrings(raw.acceptance, `steps[${index}].acceptance`))
     if (!raw.todo && !text(raw.skill)?.trim() && !text(raw.prompt)?.trim() && !raw.research) errors.push(`steps[${index}] needs skill, prompt, or research.`)
     steps.push(normalizeStep(raw, index, workflowAutonomy))
@@ -1526,6 +1536,7 @@ export class WorkflowRunner {
       timeBudgetMs: context.timeBudgetMs ?? request.step.timeBudgetMs,
       inputTokenBudget: request.step.inputTokenBudget ?? context.inputTokenBudget,
       maxRetries: request.step.maxRetries,
+      ...(request.step.tier ? { tier: request.step.tier } : {}),
       homePath: this.homePath,
       skillsLibraryPath: this.getSettings().skillsLibraryPath || undefined,
       skipReview: true
@@ -1859,7 +1870,8 @@ export const DEFAULT_RECURRING_JOBS: readonly RecurringSeedDefinition[] = [
   { id: 'competitor-watch', name: 'Competitor watch per active client', workflow: 'research', every: 'monthly', autonomy: 'assisted', enabled: true },
   { id: 'seo-performance-check', name: 'SEO + performance check per live client site', workflow: 'review-website', every: 'monthly', autonomy: 'assisted', enabled: true },
   { id: 'content-batch', name: 'Content batch for next week', workflow: 'market-project', every: 'weekly', autonomy: 'assisted', enabled: true },
-  { id: 'brain-consolidation', name: 'Brain consolidation', workflow: 'custom', every: 'monthly', autonomy: 'assisted', enabled: true, input: { placeholder: true } }
+  { id: 'brain-consolidation', name: 'Brain consolidation', workflow: 'custom', every: 'monthly', autonomy: 'assisted', enabled: true, input: { placeholder: true } },
+  { id: 'weekly-retro', name: 'Weekly retro: what to improve', workflow: 'weekly-retro', every: 'weekly', autonomy: 'assisted', enabled: true, input: {} }
 ]
 
 function localDateAt(date: Date, hour: number, minute: number): Date {
@@ -1905,6 +1917,10 @@ export function seedRecurringJobs(jobs: JobsRepository, now: () => Date = () => 
 export interface RecurringSchedulerOptions {
   jobs: JobsRepository
   workflows: WorkflowRunner
+  /** Runs a scheduled agent (recurring jobs whose workflow is `agent:<id>`, spec 018). */
+  runAgent?: (agentId: string) => void
+  /** Owner's pause switch: while true nothing scheduled starts, and due runs wait (not skipped). */
+  isPaused?: () => boolean
   now?: () => Date
   intervalMs?: number
   onEvent?: (message: string) => void
@@ -1916,6 +1932,8 @@ export class RecurringScheduler {
   private readonly now: () => Date
   private readonly intervalMs: number
   private readonly onEvent?: (message: string) => void
+  private readonly runAgent?: (agentId: string) => void
+  private readonly isPaused?: () => boolean
   private timer?: ReturnType<typeof setInterval>
   private running = false
 
@@ -1925,6 +1943,8 @@ export class RecurringScheduler {
     this.now = options.now ?? (() => new Date())
     this.intervalMs = Math.max(1_000, Math.trunc(options.intervalMs ?? 60_000))
     this.onEvent = options.onEvent
+    this.runAgent = options.runAgent
+    this.isPaused = options.isPaused
   }
 
   start(): void {
@@ -1943,6 +1963,7 @@ export class RecurringScheduler {
   }
 
   async tick(): Promise<RecurringJobRecord[]> {
+    if (this.isPaused?.()) return []
     const now = this.now()
     const due = this.jobs.listRecurringJobs().filter((job) => job.enabled && job.nextRunAt && Date.parse(job.nextRunAt) <= now.getTime())
     const started: RecurringJobRecord[] = []
@@ -1954,6 +1975,17 @@ export class RecurringScheduler {
         const message = `Skipped recurring placeholder ${job.id}. / تم تخطي المهمة المجدولة الوهمية ${job.id}.`
         this.onEvent?.(message)
         this.jobs.recordRecurringRun(job.id, now.toISOString(), next)
+        continue
+      }
+      if (job.workflow.startsWith('agent:')) {
+        try {
+          if (!this.runAgent) throw new Error('No agent runner is configured.')
+          this.runAgent(job.workflow.slice('agent:'.length))
+          started.push(this.jobs.recordRecurringRun(job.id, now.toISOString(), next) ?? job)
+        } catch (error) {
+          this.onEvent?.(`Scheduled agent ${job.id} could not start: ${errorText(error)}`)
+          this.jobs.recordRecurringRun(job.id, now.toISOString(), next)
+        }
         continue
       }
       if (once && job.workflow === 'invoice-follow-up') {

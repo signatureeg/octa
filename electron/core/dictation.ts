@@ -27,7 +27,7 @@ export interface VoiceSession {
 }
 
 export interface VoiceFallback {
-  speak(text: string): void | Promise<void>
+  speak(text: string, options?: { voiceName?: string }): void | Promise<void>
   transcribe?(audio: ArrayBuffer, options?: { language?: 'auto' | 'ar' | 'en' }): Promise<string>
   stop?(): void | Promise<void>
 }
@@ -410,7 +410,7 @@ export class VoiceController {
     }
     if (this.options.fallback) {
       try {
-        await this.options.fallback.speak(text)
+        await this.options.fallback.speak(text, { voiceName: this.options.settings().voiceName })
         return
       } catch (error) {
         this.options.onMessage?.(

@@ -12,6 +12,7 @@ import { MapPage } from './components/MapPage'
 import { SkillsPage } from './components/SkillsPage'
 import { OctaPage } from './components/OctaPage'
 import { WorkflowsPage } from './components/WorkflowsPage'
+import { AgentsPage } from './components/AgentsPage'
 import { BuildsPage } from './components/BuildsPage'
 import { TasksPage } from './components/TasksPage'
 import { ClientsPage } from './components/ClientsPage'
@@ -253,6 +254,7 @@ export function App(): React.JSX.Element {
           {page === 'tasks' && <TasksPage locale={locale} onBack={() => setPage('octa')} />}
           {page === 'clients' && <ClientsPage locale={locale} onBack={() => setPage('octa')} />}
           {page === 'workflows' && <WorkflowsPage locale={locale} />}
+          {page === 'agents' && <AgentsPage locale={locale} />}
           {page === 'skills' && <SkillsPage locale={locale} />}
           {page === 'builds' && <BuildsPage locale={locale} />}
         </section>
