@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import type { AppSettings, VoiceAudioEvent, VoiceLanguage, VoiceState, VoiceTranscriptEvent } from '../types'
-import type { GeminiLiveEvent } from '../cloud/gemini-live'
+import { liveFunctionCalls, type GeminiLiveEvent } from '../cloud/gemini-live'
 import type { ConversationRepository } from './voice/conversation'
 import {
   ReadBackApprovalGate,
@@ -23,6 +23,7 @@ export interface VoiceSession {
   sendText(text: string): void | Promise<void>
   interrupt(): void | Promise<void>
   close(): void
+  sendToolResponse?(responses: Array<{ id: string; name: string; response: Record<string, unknown> }>): void
 }
 
 export interface VoiceFallback {
@@ -47,6 +48,8 @@ export interface VoiceControllerOptions {
   onTranscript?: (event: VoiceTranscriptEvent) => void
   onLanguage?: (language: VoiceLanguage, conversationId: string | null) => void
   onMessage?: (message: string, language: VoiceLanguage | null) => void
+  /** Runs a function the Live voice called; the result is sent back as the tool response. */
+  onToolCall?: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>
   conversationId?: string
 }
 
@@ -209,6 +212,19 @@ export class VoiceController {
     this.approvalGate.recordReadBack(payload, spoken, gateId)
   }
 
+  /** Put an app update into the open live conversation; false when no session is open. */
+  announce(text: string): boolean {
+    const value = text.trim()
+    if (!value || !this.session || !this.liveReady) return false
+    try {
+      const result = this.session.sendText(value)
+      if (result instanceof Promise) void result.catch((error) => this.handleLiveFailure(error))
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async speak(text: string): Promise<void> {
     await this.speakExact(text.trim())
   }
@@ -332,7 +348,34 @@ export class VoiceController {
       this.machine.transition({ type: 'turn-complete' })
       return
     }
+    if (event.type === 'tool-call') {
+      void this.handleToolCall(event.value)
+      return
+    }
     if (event.type === 'error') this.handleLiveFailure(new Error(event.message))
+  }
+
+  private async handleToolCall(value: unknown): Promise<void> {
+    const calls = liveFunctionCalls(value)
+    if (calls.length === 0) return
+    const session = this.session
+    const responses = await Promise.all(calls.map(async (call) => {
+      let response: Record<string, unknown>
+      try {
+        response = this.options.onToolCall
+          ? await this.options.onToolCall(call.name, call.args)
+          : { error: 'Tools are unavailable.' }
+      } catch (error) {
+        response = { error: error instanceof Error ? error.message : String(error) }
+      }
+      return { id: call.id, name: call.name, response }
+    }))
+    if (session !== this.session || !this.liveReady) return
+    try {
+      session?.sendToolResponse?.(responses)
+    } catch (error) {
+      this.handleLiveFailure(error)
+    }
   }
 
   private async handleFinalUserTranscript(text: string, languageHint?: string): Promise<void> {

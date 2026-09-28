@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification, screen, shell } from 'electron'
-import { normalizePhaseModels, setPhaseModels } from './core/octa/models'
+import { normalizePhaseModels, phaseModel, setPhaseModels, MODEL_PHASES, type PhaseModels } from './core/octa/models'
+import { VoiceTools, VOICE_TOOL_DECLARATIONS, VOICE_TOOLS_INSTRUCTION } from './core/voice/tools'
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -7,6 +8,7 @@ import { GeminiClient } from './cloud/gemini'
 import {
   DEFAULT_GEMINI_LIVE_MODEL,
   GeminiLiveSession,
+  OCTA_VOICE_SYSTEM_INSTRUCTION,
   type PcmAudioOutput,
   resolveGeminiLiveModel
 } from './cloud/gemini-live'
@@ -125,6 +127,7 @@ let planner: Planner | undefined
 let conversations: ConversationRepository | undefined
 let workflowGates: WorkflowGateRegistry | undefined
 let voiceController: VoiceController | undefined
+let lastVoiceRunId: string | null = null
 let triggerManager: GlobalTriggerManager | undefined
 let voiceAudioOutput: PcmAudioOutput | undefined
 let buildManager: BuildManager | undefined
@@ -391,6 +394,56 @@ function buildStartRequest(value: unknown): BuildStartRequest {
 function requireWorkflows(): WorkflowRunner {
   if (!workflows) throw new Error('Workflow runner is unavailable.')
   return workflows
+}
+
+/** Lets the Live voice plan, execute and report ("يلا نخطط" … "نفّذي") through the real planner and runner. */
+function createVoiceTools(): VoiceTools {
+  const settings = (): AppSettings => {
+    if (!repository) throw new Error('Settings storage is unavailable.')
+    return repository.getSettings()
+  }
+  return new VoiceTools({
+    plan: async (request) => {
+      const current = settings()
+      const language = conversations?.getLanguage('default') ?? undefined
+      const brief = await compileBrief(
+        [{ role: 'user', content: request }],
+        [],
+        requireBrain(),
+        { homePath: current.octaHomePath, language }
+      )
+      return requirePlanner().plan(brief, {
+        homePath: current.octaHomePath,
+        skillsLibraryPath: current.skillsLibraryPath || undefined,
+        conversationId: 'default',
+        language
+      })
+    },
+    answer: (planId, answers) => requirePlanner().answer(planId, answers),
+    approve: (planId) => requirePlanner().approve(planId, 'owner (voice)'),
+    getPlan: (planId) => requirePlanner().get(planId),
+    latestPlanId: () => jobsRepository?.listPlans(1)[0]?.id ?? null,
+    execute: (result) => {
+      const runner = requireWorkflows()
+      const definition = runner.saveAsWorkflow(`Voice plan ${result.planId}`, result.plan)
+      const handle = runner.start({
+        workflow: definition.id,
+        brief: { plan_id: result.planId, text: result.plan.summary, plan_file: result.planPath },
+        planId: result.planId,
+        language: result.plan.language
+      })
+      lastVoiceRunId = handle.runId
+      return { runId: handle.runId, folder: handle.folder, promise: handle.promise }
+    },
+    getRun: (runId) => requireWorkflows().getRun(runId),
+    latestRunId: () => lastVoiceRunId ?? jobsRepository?.listWorkflowRuns(1)[0]?.id ?? null,
+    openPath: (path) => shell.openPath(path),
+    announce: (text) => voiceController?.announce(text) ?? false,
+    notify: (title, body) => {
+      if (Notification.isSupported()) new Notification({ title, body }).show()
+    },
+    phaseModels: () => Object.fromEntries(MODEL_PHASES.map((phase) => [phase, phaseModel(phase)])) as PhaseModels
+  })
 }
 
 function workflowStartRequest(value: unknown): WorkflowStartRequest {
@@ -1356,6 +1409,7 @@ async function start(): Promise<void> {
   }
   voiceAudioOutput = audioOutput
   const fallbackAuth = resolveAiAuth(initialSettings)
+  const voiceTools = createVoiceTools()
   voiceController = new VoiceController({
     settings: () => {
       if (!repository) throw new Error('Settings storage is unavailable.')
@@ -1376,9 +1430,13 @@ async function start(): Promise<void> {
         apiKey: settings.geminiApiKey,
         model: settings.geminiLiveModelOverride.trim() || settings.geminiLiveModel.trim() || model || DEFAULT_GEMINI_LIVE_MODEL,
         audioOutput,
-        onEvent
+        onEvent,
+        systemInstruction: `${OCTA_VOICE_SYSTEM_INSTRUCTION}
+${VOICE_TOOLS_INSTRUCTION}`,
+        functionDeclarations: VOICE_TOOL_DECLARATIONS
       })
     },
+    onToolCall: (name, args) => voiceTools.call(name, args),
     onState: emitVoiceState,
     onTranscript: emitVoiceTranscript,
     onMessage: (message) => broadcast('voice:message', message),

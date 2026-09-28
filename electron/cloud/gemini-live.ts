@@ -187,6 +187,8 @@ export interface GeminiLiveSetupOptions {
   systemInstruction?: string
   language?: string
   voiceName?: string
+  /** Function declarations the voice may call (Live API `tools`). */
+  functionDeclarations?: readonly unknown[]
 }
 
 export function createGeminiLiveSetup(options: GeminiLiveSetupOptions): Record<string, unknown> {
@@ -211,9 +213,33 @@ export function createGeminiLiveSetup(options: GeminiLiveSetupOptions): Record<s
       // payload with close code 1007 "Unknown name inputAudioTranscription".
       inputAudioTranscription: {},
       outputAudioTranscription: {},
-      systemInstruction: { parts: [{ text: instruction }] }
+      systemInstruction: { parts: [{ text: instruction }] },
+      ...(options.functionDeclarations?.length
+        ? { tools: [{ functionDeclarations: options.functionDeclarations }] }
+        : {})
     }
   }
+}
+
+export interface LiveFunctionCall {
+  id: string
+  name: string
+  args: Record<string, unknown>
+}
+
+/** The function calls inside a Live `toolCall` frame. */
+export function liveFunctionCalls(value: unknown): LiveFunctionCall[] {
+  const calls = value && typeof value === 'object' ? (value as { functionCalls?: unknown }).functionCalls : undefined
+  if (!Array.isArray(calls)) return []
+  return calls.flatMap((call) => {
+    if (!call || typeof call !== 'object') return []
+    const record = call as Record<string, unknown>
+    if (typeof record.name !== 'string' || !record.name) return []
+    const args = record.args && typeof record.args === 'object' && !Array.isArray(record.args)
+      ? record.args as Record<string, unknown>
+      : {}
+    return [{ id: typeof record.id === 'string' ? record.id : '', name: record.name, args }]
+  })
 }
 
 export function frameGeminiLiveMessage(message: unknown): string {
@@ -528,6 +554,11 @@ export class GeminiLiveSession {
     const value = text.trim()
     if (!value) return
     this.send(createRealtimeTextMessage(value))
+  }
+
+  sendToolResponse(responses: Array<{ id: string; name: string; response: Record<string, unknown> }>): void {
+    if (responses.length === 0) return
+    this.send({ toolResponse: { functionResponses: responses } })
   }
 
   sendClientContent(turns: unknown[], turnComplete = true): void {
